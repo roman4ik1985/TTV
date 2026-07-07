@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartReader — Умный Читатель</title>
+  
+  <style>
+    @import url('https://fonts.cdnfonts.com/css/opendyslexic');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; user-select: none; }
+    body { background-color: #f5f6fa; color: #2f3640; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    header { background-color: #ffffff; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dcdde1; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+    .logo-area h1 { font-size: 18px; color: #2f3542; font-weight: 700; }
+    .toolbar-actions { display: flex; align-items: center; gap: 10px; }
+    
+    button { padding: 8px 16px; font-size: 13px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; }
+    button:hover { transform: translateY(-1px); }
+    button:disabled { cursor: not-allowed; transform: none; opacity: 0.6; }
+
+    #btn-stt { background-color: #dff9fb; color: #130cb7; }
+    #btn-stt:hover { background-color: #c7ecee; }
+    #btn-trigger-upload { background-color: #e3f2fd; color: #0d47a1; }
+    #btn-trigger-upload:hover { background-color: #bbdefb; }
+    #btn-export { background-color: #e8f5e9; color: #1b5e20; margin-right: 15px; }
+    #btn-export:hover { background-color: #c8e6c9; }
+    
+    .mode-switch { display: flex; background-color: #f1f2f6; padding: 4px; border-radius: 8px; }
+    .mode-btn { padding: 8px 16px; font-size: 13px; font-weight: 600; border: none; background: transparent; color: #747d8c; cursor: pointer; border-radius: 6px; transition: all 0.2s ease; }
+    .mode-btn.active { background-color: #ffffff; color: #2f3542; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+    
+    .editor-bar { background-color: #f8f9fa; border-bottom: 1px solid #dcdde1; padding: 8px 20px; display: flex; align-items: center; gap: 10px; }
+    .editor-bar button { padding: 5px 12px; font-size: 12px; background-color: #ffffff; border: 1px solid #ced6e0; color: #2f3542; }
+    .editor-bar button:hover { background-color: #f1f2f6; }
+    
+    #btn-font-toggle { background-color: #f1f2f6; border: 1px solid #b2bec3; font-weight: 600; }
+    #btn-font-toggle.active { background-color: #2f3542; color: #ffffff; border-color: #2f3542; }
+    #btn-edit-toggle { background-color: #ffeaa7; color: #d35400; font-weight: 700; margin-left: auto; border: none; }
+    #btn-edit-toggle:hover { background-color: #f9ca24; }
+    #btn-dictionary { background-color: #fbc531; color: #ffffff; border: none; }
+    #btn-dictionary:hover { background-color: #e1b12c; }
+
+    .main-layout { flex: 1; display: flex; overflow: hidden; position: relative; flex-direction: column; }
+    .workspace { flex: 1; display: flex; overflow: hidden; }
+    
+    .sidebar { width: 220px; background-color: #ffffff; border-right: 1px solid #dcdde1; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+    .sidebar-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #a4b0be; font-weight: 700; margin-bottom: 5px; }
+    .avatar-card { display: flex; align-items: center; gap: 12px; padding: 12px; border: 2px solid #f1f2f6; border-radius: 10px; cursor: pointer; transition: all 0.2s ease; }
+    .avatar-card:hover { background-color: #f1f2f6; border-color: #ced6e0; }
+    .avatar-card.active { border-color: #ffde43; background-color: #fffdf0; }
+    .avatar-img { width: 40px; height: 40px; border-radius: 50%; background-color: #e4e7eb; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+    .avatar-info .name { font-size: 14px; font-weight: 600; color: #2f3542; }
+    .avatar-info .role { font-size: 11px; color: #747d8c; }
+    
+    .content-area { flex: 1; display: flex; flex-direction: column; background: #ffffff; }
+    #text-container { flex: 1; padding: 30px; overflow-y: auto; font-size: 19px; line-height: 1.6; color: #2f3542; word-wrap: break-word; outline: none; transition: all 0.3s ease; }
+    .sentence-span { color: #2f3542; cursor: default; }
+    #text-container.listen-mode { background-color: #1e272e; color: #ffffff; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 16px; }
+    #text-container.listen-mode span { color: #95a5a6; max-width: 400px; }
+    
+    #text-container.dyslexic-mode { font-family: 'OpenDyslexic', sans-serif !important; font-size: 20px; letter-spacing: 1px; word-spacing: 2px; }
+    #text-container.dyslexic-mode .sentence-span { font-family: 'OpenDyslexic', sans-serif !important; }
+
+    .status-bar { background-color: #f1f2f6; border-top: 1px solid #dcdde1; padding: 6px 20px; display: flex; justify-content: space-between; font-size: 12px; color: #747d8c; font-weight: 500; }
+
+    footer { background-color: #ffffff; border-top: 1px solid #dcdde1; padding: 15px 30px; display: flex; align-items: center; justify-content: space-between; gap: 30px; box-shadow: 0 -2px 10px rgba(0,0,0,0.03); }
+    .player-buttons { display: flex; align-items: center; gap: 10px; }
+    .btn { width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: all 0.2s ease; }
+    #btn-play { background-color: #2f3542; color: #ffffff; width: 50px; height: 50px; font-size: 18px; }
+    #btn-play:hover { background-color: #57606f; transform: scale(1.04); }
+    #btn-pause { background-color: #f1f2f6; color: #2f3542; }
+    #btn-pause:hover { background-color: #ced6e0; }
+    #btn-stop { background-color: #ffeaa7; color: #d63031; }
+    #btn-stop:hover { background-color: #ffd32a; }
+    .sliders-panel { display: flex; align-items: center; gap: 25px; flex: 1; justify-content: flex-end; }
+    .control-group { display: flex; flex-direction: column; gap: 4px; min-width: 130px; }
+    .control-group label { font-size: 11px; font-weight: 700; color: #747d8c; text-transform: uppercase; letter-spacing: 0.5px; }
+    input[type="range"] { -webkit-appearance: none; width: 100%; height: 6px; background: #e4e7eb; border-radius: 3px; outline: none; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #2f3542; cursor: pointer; transition: transform 0.1s; }
+    input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+    #sync-slider::-webkit-slider-thumb { background: #e67e22; }
+
+    /* МОДАЛЬНОЕ ОКНО ЗАГРУЗКИ (SPEECHIFY STYLE) */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background-color: rgba(0, 0, 0, 0.4); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 2000; opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+    }
+    .modal-overlay.active { opacity: 1; pointer-events: auto; }
+
+    .modal-window {
+      background-color: #ffffff; width: 680px; border-radius: 20px;
+      padding: 30px; box-shadow: 0 15px 40px rgba(0,0,0,0.15);
+      position: relative; transform: scale(0.9) translateY(20px);
+      transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .modal-overlay.active .modal-window { transform: scale(1) translateY(0); }
+
+    .modal-close {
+      position: absolute; top: 20px; right: 20px; font-size: 24px; color: #2f3542; cursor: pointer;
+      width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; transition: background-color 0.2s;
+    }
+    .modal-close:hover { background-color: #f1f2f6; }
+    .modal-title { font-size: 20px; font-weight: 700; text-align: center; color: #2f3542; margin-bottom: 25px; }
+
+    .dropzone-container {
+      border: 2px dashed #ced6e0; border-radius: 16px; padding: 35px 20px; text-align: center;
+      display: flex; flex-direction: column; align-items: center; background-color: #ffffff; transition: all 0.2s ease;
+    }
+    .dropzone-container:hover, .dropzone-container.drag-over { border-color: #2f54eb; background-color: #f0f5ff; }
+    .dropzone-icon { width: 50px; height: 50px; color: #a4b0be; margin-bottom: 12px; }
+    .dropzone-container:hover .dropzone-icon, .dropzone-container.drag-over .dropzone-icon { color: #2f54eb; }
+    .dropzone-text { font-size: 15px; color: #57606f; font-weight: 600; margin-bottom: 12px; }
+    
+    .btn-browse {
+      background-color: #2f54eb; color: #ffffff; padding: 10px 30px; font-size: 14px; font-weight: 700;
+      border-radius: 25px; box-shadow: 0 4px 10px rgba(47, 84, 235, 0.2); margin-bottom: 15px; border: none; cursor: pointer;
+    }
+    .btn-browse:hover { background-color: #1d39c4; }
+    .dropzone-formats { font-size: 12px; color: #a4b0be; font-weight: 500; }
+
+    /* БЛОК КРАСИВОГО ИМПОРТА С YOUTUBE */
+    .youtube-import-box {
+      width: 100%; margin-top: 20px; padding-top: 15px; border-top: 1px dashed #dcdde1;
+    }
+    .youtube-label { font-size: 13px; font-weight: 700; color: #57606f; margin-bottom: 8px; text-align: left; }
+    .youtube-input-group { display: flex; gap: 10px; }
+    .youtube-input {
+      flex: 1; padding: 10px 15px; border: 1px solid #ced6e0; border-radius: 8px;
+      outline: none; font-size: 14px; transition: border-color 0.2s;
+    }
+    .youtube-input:focus { border-color: #ff4757; }
+    .btn-youtube-load {
+      background-color: #ff4757; color: #ffffff; padding: 10px 20px; font-size: 13px;
+      font-weight: 700; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.2s;
+    }
+    .btn-youtube-load:hover { background-color: #ff2a3b; }
+
+    .transcript-paste-box {
+      width: 100%; margin-top: 18px; padding-top: 15px; border-top: 1px dashed #dcdde1;
+    }
+    .transcript-paste-label {
+      font-size: 13px; font-weight: 700; color: #57606f; margin-bottom: 8px; text-align: left;
+    }
+    .transcript-paste-help {
+      font-size: 12px; color: #747d8c; margin-bottom: 10px; line-height: 1.45;
+    }
+    .transcript-paste-input {
+      width: 100%; min-height: 110px; resize: vertical; padding: 12px 14px; border: 1px solid #ced6e0;
+      border-radius: 10px; outline: none; font-size: 14px; line-height: 1.5; color: #2f3542;
+      background-color: #ffffff;
+    }
+    .transcript-paste-input:focus { border-color: #2f54eb; }
+    .transcript-paste-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+    .btn-transcript-paste {
+      background-color: #2f54eb; color: #ffffff; padding: 10px 18px; font-size: 13px;
+      font-weight: 700; border: none; border-radius: 8px; cursor: pointer;
+    }
+    .btn-transcript-paste:hover { background-color: #1d39c4; }
+
+    /* Панель внешних интеграций */
+    .integrations-section { margin-top: 25px; }
+    .integrations-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .integrations-title { font-size: 14px; font-weight: 700; color: #2f3542; }
+    .integrations-feedback { font-size: 11px; color: #2f3542; font-weight: 600; text-decoration: none; }
+    .integrations-feedback:hover { text-decoration: underline; }
+    .integrations-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+    
+    .cloud-card {
+      background-color: #f8f9fa; border: 1px solid #f1f2f6; border-radius: 12px;
+      padding: 12px; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 8px; cursor: pointer; position: relative; transition: all 0.2s ease;
+    }
+    .cloud-card:hover { background-color: #f1f2f6; transform: translateY(-2px); }
+    .cloud-card .cloud-logo { width: 28px; height: 28px; }
+    .cloud-card .cloud-name { font-size: 12px; font-weight: 600; color: #2f3542; }
+    .cloud-card-menu { position: absolute; top: 8px; right: 12px; color: #a4b0be; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-area"><h1>SmartReader</h1></div>
+    <div class="toolbar-actions">
+      <button id="btn-stt">🎙️ Диктовать</button>
+      <button id="btn-trigger-upload">📥 Загрузить файл</button>
+      <button id="btn-export">💾 Экспорт</button>
+      <div class="mode-switch">
+        <button class="mode-btn active" id="mode-read">📖 Чтение</button>
+        <button class="mode-btn" id="mode-listen">🎧 Слушать</button>
+      </div>
+    </div>
+  </header>
+  
+  <div class="editor-bar">
+    <button id="btn-bold"><b>Ж</b></button>
+    <button id="btn-italic"><i>К</i></button>
+    <button id="btn-list">• Список</button>
+    <button id="btn-font-toggle">🔤 Шрифт Dyslexic</button>
+    <button id="btn-dictionary">📖 Словарь ИИ</button>
+    <button id="btn-edit-toggle">✍️ Редактировать</button>
+  </div>
+
+  <div class="main-layout">
+    <div class="workspace">
+      <div class="sidebar">
+        <div class="sidebar-title">Голос движка</div>
+        <div class="avatar-card active" data-voice-gender="male"><div class="avatar-img">👨‍💼</div><div class="avatar-info"><div class="name">Дмитрий</div><div class="role">Нейросеть (М)</div></div></div>
+        <div class="avatar-card" data-voice-gender="female"><div class="avatar-img">👩‍💼</div><div class="avatar-info"><div class="name">Светлана</div><div class="role">Нейросеть (Ж)</div></div></div>
+      </div>
+      <div class="content-area">
+        <div id="text-container" contenteditable="false">
+          <span style="color: #a4b0be;">Приложение готово. Скопируй текст (Ctrl+C) и нажми <b>Ctrl+Shift+T</b>, нажми кнопку <b>🎙️ Диктовать</b> или нажмите <b>📥 Загрузить файл</b> для импорта книг, аудио и YouTube.</span>
+        </div>
+        <div class="status-bar">
+          <span id="lbl-status">Режим просмотра</span>
+          <div>
+            <span style="margin-right: 15px;">Символов: <b id="cnt-chars">0</b></span>
+            <span>Слов: <b id="cnt-words">0</b></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="upload-modal">
+    <div class="modal-window">
+      <div class="modal-close" id="btn-modal-close">&times;</div>
+      <div class="modal-title">Загрузить файл</div>
+      
+      <div class="dropzone-container" id="dropzone">
+        <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+        <div class="dropzone-text">Перетащите файлы сюда, чтобы загрузить, или</div>
+        <button class="btn-browse" id="btn-browse-trigger">Просмотр файлов</button>
+        <div class="dropzone-formats">Поддерживаемые форматы: pdf, docx, epub, txt, md, vtt, srt, mp3, wav</div>
+        
+        <input type="file" id="universal-file-input" accept=".pdf,.txt,.md,.vtt,.srt,.mp3,.wav,.docx,.epub" style="display: none;">
+      </div>
+
+      <div class="youtube-import-box">
+        <div class="youtube-label">Или вставьте ссылку на видео YouTube:</div>
+        <div class="youtube-input-group">
+          <input type="text" id="youtube-url-input" class="youtube-input" placeholder="https://www.youtube.com/watch?v=...">
+          <button class="btn-youtube-load" id="btn-youtube-submit">Загрузить</button>
+        </div>
+      </div>
+
+      <div class="transcript-paste-box">
+        <div class="transcript-paste-label">Если YouTube заблокировал субтитры:</div>
+        <div class="transcript-paste-help">Вставьте готовую расшифровку или содержимое файла `.vtt` / `.srt` / `.txt` и загрузите текст напрямую.</div>
+        <textarea id="transcript-paste-input" class="transcript-paste-input" placeholder="Вставьте сюда расшифровку или субтитры..."></textarea>
+        <div class="transcript-paste-actions">
+          <button class="btn-transcript-paste" id="btn-transcript-paste">Загрузить текст</button>
+        </div>
+      </div>
+
+      <div class="integrations-section">
+        <div class="integrations-header">
+          <div class="integrations-title">Импортировать из</div>
+          <a href="#" class="integrations-feedback" onclick="alert('Спасибо! Мы зафиксировали ваш интерес к новым облачным интеграциям.')">
+            Не нашли нужную интеграцию?
+          </a>
+        </div>
+        
+        <div class="integrations-grid">
+          <div class="cloud-card" onclick="alert('Интеграция с Google Диск находится в разработке!')">
+            <div class="cloud-card-menu">&#8226;&#8226;&#8226;</div>
+            <svg class="cloud-logo" viewBox="0 0 24 24"><path fill="#00AA4A" d="M15.4 15.2L9.3 4.7H3.2l6.1 10.5z"/><path fill="#21A0F2" d="M20.8 15.2h-12.2l3-5.2h12.2z"/><path fill="#FFD200" d="M14.7 10L9.3 19.3h6.1l5.4-9.3z"/></svg>
+            <div class="cloud-name">Google Диск</div>
+          </div>
+          <div class="cloud-card" onclick="alert('Интеграция с Dropbox находится в разработке!')">
+            <div class="cloud-card-menu">&#8226;&#8226;&#8226;</div>
+            <svg class="cloud-logo" viewBox="0 0 24 24" fill="#0061FE"><path d="M6 2l6 4-6 4-6-4zm12 0l6 4-6 4-6-4zm-12 12l6-4 6 4-6 4zm12 0l6-4 6 4-6 4zm-6 5.5l6-4 6 4-12 4.5-12-4.5z"/></svg>
+            <div class="cloud-name">Dropbox</div>
+          </div>
+          <div class="cloud-card" onclick="alert('Integraciya s OneDrive v razrabotke!')">
+            <div class="cloud-card-menu">&#8226;&#8226;&#8226;</div>
+            <svg class="cloud-logo" viewBox="0 0 24 24" fill="#0078D4"><path d="M18.5 10c-1.4 0-2.6.8-3.2 2-1-.7-2.2-1-3.5-1-2.6 0-4.8 1.9-5.2 4.4-.7-.3-1.4-.4-2.1-.4-2.5 0-4.5 2-4.5 4.5S2 24 4.5 24h14c3 0 5.5-2.5 5.5-5.5s-2.5-5.5-5.5-5.5c0-1.7-1.3-3-3-3z"/></svg>
+            <div class="cloud-name">OneDrive</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>
+    <div class="player-buttons">
+      <button class="btn" id="btn-play">▶</button>
+      <button class="btn" id="btn-pause">⏸</button>
+      <button class="btn" id="btn-stop">⏹</button>
+    </div>
+    <div class="sliders-panel">
+      <div class="control-group"><label>Скорость</label><input type="range" id="rate-slider" min="0.5" max="2" step="0.1" value="1"></div>
+      <div class="control-group"><label>Громкость</label><input type="range" id="volume-slider" min="0" max="1" step="0.05" value="1"></div>
+      <div class="control-group"><label style="color: #e67e22;">Синхронизация</label><input type="range" id="sync-slider" min="-1.5" max="1.5" step="0.05" value="0"></div>
+    </div>
+  </footer>
+  
+  <script src="renderer.js"></script>
+</body>
+</html>

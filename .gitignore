@@ -1,0 +1,9 @@
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.agents/
+temp_*.txt
+temp_*.json
+temp_*.mp3
