@@ -397,7 +397,10 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     const message = result.error || output || `Процесс завершился с кодом ${result.code}.`;
-    showProcessingError(message);
+    const fallbackText = ext === 'youtube'
+      ? 'Не удалось импортировать субтитры из YouTube.'
+      : 'Произошла ошибка ИИ-модуля.';
+    showProcessingError(message, fallbackText);
   }
 
   async function startSpeaking(text) {
