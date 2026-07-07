@@ -147,6 +147,12 @@ window.addEventListener('DOMContentLoaded', () => {
     return getFileExtension(filePath);
   }
 
+  function getSelectedFilePath(file) {
+    if (!file) return '';
+    if (smartReader.getFilePath) return smartReader.getFilePath(file);
+    return file.path || '';
+  }
+
   function getImportConfig(kind) {
     const configs = {
       pdf: {
@@ -624,7 +630,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
     dropzone.addEventListener('drop', (event) => {
       const file = event.dataTransfer.files[0];
-      if (file) void processUploadedFile(file.path);
+      if (file) void processUploadedFile(getSelectedFilePath(file));
     });
   }
 
@@ -633,7 +639,7 @@ window.addEventListener('DOMContentLoaded', () => {
     universalFileInput.addEventListener('change', () => {
       const file = universalFileInput.files[0];
       if (file) {
-        void processUploadedFile(file.path);
+        void processUploadedFile(getSelectedFilePath(file));
         universalFileInput.value = '';
       }
     });

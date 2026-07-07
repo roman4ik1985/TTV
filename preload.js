@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 function makeEventSubscription(channel) {
   return (callback) => {
@@ -10,6 +10,7 @@ function makeEventSubscription(channel) {
 
 contextBridge.exposeInMainWorld('smartReader', {
   showSaveDialog: () => ipcRenderer.invoke('show-save-dialog'),
+  getFilePath: (file) => webUtils.getPathForFile(file),
   readTextFile: (filePath) => ipcRenderer.invoke('read-text-file', filePath),
   readUserDictionary: () => ipcRenderer.invoke('read-user-dictionary'),
   writeUserDictionary: (dictionary) => ipcRenderer.invoke('write-user-dictionary', dictionary),
