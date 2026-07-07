@@ -1,12 +1,16 @@
 {
-  "name": "text-to-voice",
+  "name": "ttv-smartreader",
   "version": "1.0.0",
-  "description": "Приложение для чтения текста вслух",
+  "description": "TTV / SmartReader desktop app for TTS, STT, and text import flows",
   "main": "main.js",
   "author": "Roman",
   "scripts": {
     "start": "electron main.js",
-    "build": "electron-packager . SmartReader --platform=win32 --arch=x64 --out=dist --overwrite"
+    "build": "electron-packager . SmartReader --platform=win32 --arch=x64 --out=dist --overwrite",
+    "check:js": "node --check main.js && node --check preload.js && node --check renderer.js",
+    "check:python": "python -m py_compile stt_server.py tts_server.py",
+    "check:python-imports": "python -c \"import stt_server, tts_server; print('python imports ok')\"",
+    "ci": "npm run check:js && npm run check:python && npm run check:python-imports"
   },
   "devDependencies": {
     "electron": "^43.0.0",

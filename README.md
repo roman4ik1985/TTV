@@ -1,6 +1,6 @@
-# SmartReader
+# TTV / SmartReader
 
-Electron desktop app for reading Russian text aloud, importing text from files, transcribing speech, and extracting text from supported media sources.
+`TTV` is the GitHub repository and delivery baseline for the `SmartReader` Electron desktop app. The app reads Russian text aloud, imports text from files, transcribes speech, and extracts text from supported media sources.
 
 ## Features
 
@@ -28,6 +28,12 @@ Electron desktop app for reading Russian text aloud, importing text from files, 
 
 ## Setup
 
+Prerequisites:
+
+- Node.js 22+
+- Python 3.11+
+- Windows environment for the packaged desktop target
+
 1. Install Node.js dependencies:
    `npm install`
 2. Install Python dependencies:
@@ -37,6 +43,13 @@ Electron desktop app for reading Russian text aloud, importing text from files, 
 
 - Start the desktop app:
   `npm start`
+
+## Validation
+
+- Local JS and Python syntax checks:
+  `npm run ci`
+- Windows packaging build:
+  `npm run build`
 
 ## Build
 
@@ -51,3 +64,4 @@ Electron desktop app for reading Russian text aloud, importing text from files, 
 - YouTube import now prefers `yt-dlp` with browser cookies from local Chromium browsers and falls back to `youtube-transcript-api` when browser-backed extraction is unavailable.
 - If Chrome is open, Windows may lock the Chrome `Cookies` database. In that case, close Chrome and retry the YouTube import.
 - If YouTube keeps blocking subtitle retrieval, use the upload modal to import a saved `.vtt` / `.srt` / `.txt` transcript or paste the transcript text directly.
+- The current CI baseline validates dependency install, JavaScript syntax, and Python syntax/import smoke checks on GitHub Actions.
