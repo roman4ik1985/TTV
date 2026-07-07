@@ -86,6 +86,124 @@ window.addEventListener('DOMContentLoaded', () => {
     if (transcriptPasteInput) transcriptPasteInput.value = '';
   }
 
+  function setStatus(message) {
+    if (lblStatus) lblStatus.textContent = message;
+  }
+
+  function renderImportState(message, color = '#2f54eb') {
+    renderTextMessage(message, {
+      color,
+      fontWeight: 'bold',
+      display: 'block',
+      textAlign: 'center',
+      marginTop: '40px',
+      fontSize: '22px'
+    });
+  }
+
+  function renderImportProblem(title, detail, action) {
+    if (!textContainer) return;
+    resetTextContainerWhiteSpace();
+
+    const wrapper = document.createElement('div');
+    applyInlineStyles(wrapper, {
+      textAlign: 'center',
+      color: '#747d8c',
+      marginTop: '40px',
+      lineHeight: '1.55',
+      padding: '0 20px'
+    });
+
+    const titleNode = renderTextBlock('div', title, {
+      color: '#2f3542',
+      fontWeight: '700',
+      fontSize: '20px',
+      marginBottom: '10px'
+    });
+    const detailNode = renderTextBlock('div', detail, { marginBottom: '8px' });
+    const actionNode = renderTextBlock('div', action, {
+      color: '#2f54eb',
+      fontWeight: '600'
+    });
+
+    wrapper.append(titleNode, detailNode, actionNode);
+    textContainer.replaceChildren(wrapper);
+  }
+
+  function isYoutubeUrl(value) {
+    const normalized = (value || '').toLowerCase();
+    return normalized.includes('youtube.com') || normalized.includes('youtu.be');
+  }
+
+  function getFileExtension(filePath) {
+    const cleanPath = (filePath || '').split(/[\\/]/).pop() || '';
+    const lastDotIndex = cleanPath.lastIndexOf('.');
+    if (lastDotIndex <= 0 || lastDotIndex === cleanPath.length - 1) return '';
+    return cleanPath.slice(lastDotIndex + 1).toLowerCase();
+  }
+
+  function getImportKind(filePath) {
+    if (isYoutubeUrl(filePath)) return 'youtube';
+    return getFileExtension(filePath);
+  }
+
+  function getImportConfig(kind) {
+    const configs = {
+      pdf: {
+        label: 'PDF',
+        loading: 'Извлекаю текст из PDF...',
+        color: '#d35400',
+        failureTitle: 'PDF не импортирован',
+        failureAction: 'Если это скан или поврежденный текстовый слой, нужен текстовый PDF или OCR.'
+      },
+      docx: {
+        label: 'Word',
+        loading: 'Считываю текст из Word-документа...',
+        color: '#2f54eb',
+        failureTitle: 'Word-документ не импортирован',
+        failureAction: 'Проверьте файл или сохраните документ как .txt и импортируйте повторно.'
+      },
+      epub: {
+        label: 'EPUB',
+        loading: 'Извлекаю текст из EPUB-книги...',
+        color: '#2ed573',
+        failureTitle: 'EPUB не импортирован',
+        failureAction: 'Проверьте файл или попробуйте экспортировать книгу в .txt.'
+      },
+      youtube: {
+        label: 'YouTube',
+        loading: 'Получаю субтитры YouTube...',
+        color: '#ff4757',
+        failureTitle: 'YouTube не импортирован автоматически',
+        failureAction: 'Вставьте готовую расшифровку ниже или импортируйте файл .vtt, .srt или .txt.',
+        reopenUploadModal: true
+      },
+      audio: {
+        label: 'Аудио',
+        loading: 'Распознаю аудиозапись...',
+        color: '#0d47a1',
+        failureTitle: 'Аудиофайл не распознан',
+        failureAction: 'Проверьте формат файла или попробуйте WAV/MP3/OGG/FLAC с чистой речью.'
+      },
+      text: {
+        label: 'Текстовый файл',
+        loading: 'Загружаю текстовый файл...',
+        color: '#2f54eb',
+        failureTitle: 'Текстовый файл не импортирован',
+        failureAction: 'Проверьте кодировку и убедитесь, что файл содержит текст.'
+      },
+      manual: {
+        label: 'Вставленная расшифровка',
+        failureTitle: 'Расшифровка не импортирована',
+        failureAction: 'Проверьте, что после очистки субтитров остается обычный текст.'
+      }
+    };
+
+    if (['mp3', 'wav', 'ogg', 'flac'].includes(kind)) return configs.audio;
+    if (['txt', 'md', 'vtt', 'srt'].includes(kind)) return configs.text;
+    return configs[kind] || null;
+  }
+
   function renderLiveTranscript(text) {
     if (!textContainer) return;
     resetTextContainerWhiteSpace();
@@ -192,7 +310,7 @@ window.addEventListener('DOMContentLoaded', () => {
     return cleanText.trim();
   }
 
-  function applyImportedText(text) {
+  function applyImportedText(text, sourceLabel = 'Текст') {
     fullText = text;
     updateCounters(fullText);
 
@@ -200,7 +318,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (currentMode === 'read') {
         prepareSentenceUI(fullText);
       } else {
-        renderTextMessage('🎧 Текст загружен. Переключитесь в режим чтения или нажмите воспроизведение.', {
+        renderTextMessage('Текст загружен. Переключитесь в режим чтения или нажмите воспроизведение.', {
           color: '#2f54eb',
           fontWeight: 'bold',
           display: 'block',
@@ -208,6 +326,7 @@ window.addEventListener('DOMContentLoaded', () => {
           marginTop: '40px'
         });
       }
+      setStatus(`${sourceLabel} импортирован: ${fullText.length} символов`);
     } else {
       renderTextMessage('Текст загружен, но после очистки субтитров содержимое оказалось пустым.', {
         color: '#747d8c',
@@ -215,18 +334,48 @@ window.addEventListener('DOMContentLoaded', () => {
         textAlign: 'center',
         marginTop: '40px'
       });
+      setStatus('Импорт завершился без текста');
     }
   }
 
-  function showProcessingError(message, fallbackText = 'Произошла ошибка ИИ-модуля.') {
+  function completeImportedText(rawText, kind, importConfig) {
+    const preparedText = prepareImportedText(rawText, kind);
+
+    if (!preparedText) {
+      showProcessingError('После обработки не найден импортируемый текст.', `${importConfig.label} не импортирован.`, {
+        failureTitle: importConfig.failureTitle,
+        failureAction: importConfig.failureAction,
+        reopenUploadModal: importConfig.reopenUploadModal
+      });
+      return false;
+    }
+
+    applyImportedText(preparedText, importConfig.label);
+    return true;
+  }
+
+  function showProcessingError(message, fallbackText = 'Произошла ошибка модуля обработки.', options = {}) {
     const safeMessage = normalizeRuntimeError(message || fallbackText);
     alert(safeMessage);
-    renderTextMessage(fallbackText, {
-      color: '#747d8c',
-      display: 'block',
-      textAlign: 'center',
-      marginTop: '40px'
-    });
+
+    if (options.reopenUploadModal && uploadModal) uploadModal.classList.add('active');
+
+    if (options.failureTitle && options.failureAction) {
+      renderImportProblem(options.failureTitle, safeMessage, options.failureAction);
+    } else {
+      renderTextMessage(fallbackText, {
+        color: '#747d8c',
+        display: 'block',
+        textAlign: 'center',
+        marginTop: '40px'
+      });
+    }
+
+    if (options.status) {
+      setStatus(options.status);
+    } else if (options.failureTitle) {
+      setStatus('Импорт не выполнен');
+    }
   }
 
   function updateCounters(text) {
@@ -323,81 +472,60 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   async function processUploadedFile(filePath) {
-    if (!filePath) return;
+    if (!filePath) return false;
     if (uploadModal) uploadModal.classList.remove('active');
 
-    const isYoutube = filePath.includes('youtube.com') || filePath.includes('youtu.be');
-    const ext = isYoutube ? 'youtube' : filePath.split('.').pop().toLowerCase();
+    const ext = getImportKind(filePath);
+    const importConfig = getImportConfig(ext);
 
-    if (ext === 'pdf') {
-      renderTextMessage('📄 ИИ извлекает страницы из PDF книги...', {
-        color: '#d35400',
-        fontWeight: 'bold',
-        display: 'block',
-        textAlign: 'center',
-        marginTop: '40px',
-        fontSize: '22px'
-      });
-    } else if (ext === 'docx') {
-      renderTextMessage('📝 ИИ считывает текстовые блоки документа Word (.docx)...', {
-        color: '#2f54eb',
-        fontWeight: 'bold',
-        display: 'block',
-        textAlign: 'center',
-        marginTop: '40px',
-        fontSize: '22px'
-      });
-    } else if (ext === 'epub') {
-      renderTextMessage('📚 ИИ распаковывает и форматирует электронную книгу (.epub)...', {
-        color: '#2ed573',
-        fontWeight: 'bold',
-        display: 'block',
-        textAlign: 'center',
-        marginTop: '40px',
-        fontSize: '22px'
-      });
-    } else if (ext === 'youtube') {
-      renderTextMessage('⚙️ ИИ связывается с YouTube и расшифровывает субтитры видео...', {
-        color: '#ff4757',
-        fontWeight: 'bold',
-        display: 'block',
-        textAlign: 'center',
-        marginTop: '40px',
-        fontSize: '22px'
-      });
-    } else if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) {
-      renderTextMessage('🎙️ ИИ переводит аудиозапись в текст...', {
-        color: '#0d47a1',
-        fontWeight: 'bold',
-        display: 'block',
-        textAlign: 'center',
-        marginTop: '40px',
-        fontSize: '22px'
-      });
+    if (importConfig && importConfig.loading) {
+      renderImportState(importConfig.loading, importConfig.color);
+      setStatus(`${importConfig.label}: импорт...`);
     } else if (['txt', 'md', 'vtt', 'srt'].includes(ext)) {
+      setStatus('Текстовый файл: импорт...');
+    }
+
+    if (['txt', 'md', 'vtt', 'srt'].includes(ext)) {
       const fileResult = await smartReader.readTextFile(filePath);
       if (!fileResult.ok) {
-        alert(`Ошибка чтения: ${fileResult.error}`);
-        return;
+        showProcessingError(fileResult.error, 'Не удалось прочитать текстовый файл.', {
+          failureTitle: importConfig.failureTitle,
+          failureAction: importConfig.failureAction
+        });
+        return false;
       }
 
-      applyImportedText(prepareImportedText(fileResult.text, ext));
-      return;
-    } else {
-      alert(`Формат .${ext} пока не поддерживается ИИ. Используйте PDF, DOCX, EPUB, TXT, VTT, SRT, аудио или YouTube.`);
-      return;
+      return completeImportedText(fileResult.text, ext, importConfig);
+    }
+
+    if (!importConfig) {
+      const displayExt = ext ? `.${ext}` : 'без расширения';
+      showProcessingError(
+        `Формат ${displayExt} не поддерживается.`,
+        'Файл не импортирован.',
+        {
+          failureTitle: 'Формат не поддерживается',
+          failureAction: 'Используйте PDF, DOCX, EPUB, TXT, MD, VTT, SRT, MP3, WAV, OGG, FLAC или ссылку YouTube.'
+        }
+      );
+      return false;
     }
 
     const result = await smartReader.processImport(filePath);
-    const output = result.stdout || result.stderr;
+    const output = result.stdout || result.stderr || '';
 
     if (output.includes('FILE_SUCCESS:')) {
-      applyImportedText(output.split('FILE_SUCCESS:')[1].trim());
-      return;
+      const successText = output.slice(output.indexOf('FILE_SUCCESS:') + 'FILE_SUCCESS:'.length).trim();
+      return completeImportedText(successText, ext, importConfig);
     }
 
     const message = result.error || output || `Процесс завершился с кодом ${result.code}.`;
-    showProcessingError(message);
+    showProcessingError(message, `${importConfig.label} не импортирован.`, {
+      failureTitle: importConfig.failureTitle,
+      failureAction: importConfig.failureAction,
+      reopenUploadModal: importConfig.reopenUploadModal
+    });
+    return false;
   }
 
   async function startSpeaking(text) {
@@ -449,15 +577,20 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   if (btnYoutubeSubmit && youtubeUrlInput) {
-    btnYoutubeSubmit.addEventListener('click', () => {
+    btnYoutubeSubmit.addEventListener('click', async () => {
       const url = youtubeUrlInput.value.trim();
       if (!url) {
         alert('Пожалуйста, вставьте ссылку на видео YouTube!');
         return;
       }
 
-      void processUploadedFile(url);
-      if (youtubeUrlInput) youtubeUrlInput.value = '';
+      if (!isYoutubeUrl(url)) {
+        alert('Ссылка должна вести на youtube.com или youtu.be.');
+        return;
+      }
+
+      const imported = await processUploadedFile(url);
+      if (imported && youtubeUrlInput) youtubeUrlInput.value = '';
     });
   }
 
@@ -470,8 +603,8 @@ window.addEventListener('DOMContentLoaded', () => {
       }
 
       if (uploadModal) uploadModal.classList.remove('active');
-      applyImportedText(prepareImportedText(rawText, 'pasted'));
-      clearImportInputs();
+      const importConfig = getImportConfig('manual');
+      if (completeImportedText(rawText, 'pasted', importConfig)) clearImportInputs();
     });
   }
 

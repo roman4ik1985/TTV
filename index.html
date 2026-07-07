@@ -237,9 +237,9 @@
         </svg>
         <div class="dropzone-text">Перетащите файлы сюда, чтобы загрузить, или</div>
         <button class="btn-browse" id="btn-browse-trigger">Просмотр файлов</button>
-        <div class="dropzone-formats">Поддерживаемые форматы: pdf, docx, epub, txt, md, vtt, srt, mp3, wav</div>
+        <div class="dropzone-formats">Поддерживаемые форматы: pdf, docx, epub, txt, md, vtt, srt, mp3, wav, ogg, flac</div>
         
-        <input type="file" id="universal-file-input" accept=".pdf,.txt,.md,.vtt,.srt,.mp3,.wav,.docx,.epub" style="display: none;">
+        <input type="file" id="universal-file-input" accept=".pdf,.txt,.md,.vtt,.srt,.mp3,.wav,.ogg,.flac,.docx,.epub" style="display: none;">
       </div>
 
       <div class="youtube-import-box">
@@ -251,8 +251,8 @@
       </div>
 
       <div class="transcript-paste-box">
-        <div class="transcript-paste-label">Если YouTube заблокировал субтитры:</div>
-        <div class="transcript-paste-help">Вставьте готовую расшифровку или содержимое файла `.vtt` / `.srt` / `.txt` и загрузите текст напрямую.</div>
+        <div class="transcript-paste-label">Если автоматический импорт YouTube не прошел:</div>
+        <div class="transcript-paste-help">Вставьте готовую расшифровку или содержимое файла .vtt / .srt / .txt и загрузите текст напрямую.</div>
         <textarea id="transcript-paste-input" class="transcript-paste-input" placeholder="Вставьте сюда расшифровку или субтитры..."></textarea>
         <div class="transcript-paste-actions">
           <button class="btn-transcript-paste" id="btn-transcript-paste">Загрузить текст</button>
