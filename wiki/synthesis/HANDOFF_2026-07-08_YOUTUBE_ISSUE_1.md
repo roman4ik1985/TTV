@@ -31,6 +31,17 @@ Stabilize issue `#1` for YouTube import hardening in `roman4ik1985/TTV`: make fa
 3. If the exported-cookie path works, close issue `#1` with exact reproduction steps and optionally cut `v0.1.1`.
 4. If it still fails, capture one concrete failing exported-cookie sample path and exact yt-dlp error for a narrower follow-up.
 
+## Latest Diagnostic State
+
+- No real exported `youtube_cookies.txt` was found in typical local user locations during the follow-up pass.
+- Chrome is currently running and still reproduces the locked `Cookies` database path.
+- Edge still reproduces the underlying raw `yt-dlp` failure:
+  - `ERROR: Failed to decrypt with DPAPI`
+  - upstream reference reported by `yt-dlp`: issue `10927`
+- Current conclusion:
+  - the app-side hardening is in place;
+  - the remaining blocker is environment-level validation of a real Netscape-format exported cookie file, not an unclassified code-path failure inside TTV.
+
 ## Key Files
 
 - `C:\Text to Speech\stt_server.py`
