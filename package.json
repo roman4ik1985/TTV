@@ -10,7 +10,8 @@
     "check:js": "node --check main.js && node --check preload.js && node --check renderer.js",
     "check:python": "python -m py_compile stt_server.py tts_server.py",
     "check:python-imports": "python -c \"import stt_server, tts_server; print('python imports ok')\"",
-    "ci": "npm run check:js && npm run check:python && npm run check:python-imports"
+    "check:pdf-import": "python scripts/pdf_import_smoke.py",
+    "ci": "npm run check:js && npm run check:python && npm run check:python-imports && npm run check:pdf-import"
   },
   "devDependencies": {
     "electron": "^43.0.0",

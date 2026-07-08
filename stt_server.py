@@ -13,6 +13,15 @@ class YouTubeSubtitleBlockedError(Exception):
 class YouTubeBrowserCookieError(Exception):
     pass
 
+class PDFImportError(ValueError):
+    pass
+
+class PDFOcrRequiredError(PDFImportError):
+    pass
+
+class PDFBrokenTextLayerError(PDFImportError):
+    pass
+
 class SilentYtdlpLogger:
     def debug(self, _message):
         pass
@@ -291,6 +300,21 @@ def looks_like_broken_pdf_text(text):
 
     return suspicious_count >= 8 and suspicious_ratio >= 0.2 and readable_ratio < 0.6
 
+def validate_pdf_extracted_text(extracted_text):
+    cleaned_text = (extracted_text or "").strip()
+
+    if not cleaned_text:
+        raise PDFOcrRequiredError(
+            "PDF не содержит извлекаемого текстового слоя. Похоже, это скан или изображение; нужен OCR или текстовый PDF."
+        )
+
+    if looks_like_broken_pdf_text(cleaned_text):
+        raise PDFBrokenTextLayerError(
+            "PDF содержит поврежденный текстовый слой: символы извлекаются некорректно. Нужен другой PDF или OCR."
+        )
+
+    return cleaned_text
+
 def extract_pdf_text(file_path):
     import pypdf
 
@@ -309,15 +333,7 @@ def extract_pdf_text(file_path):
         if page_text:
             extracted_pages.append(page_text)
 
-    extracted_text = "\n".join(extracted_pages).strip()
-
-    if not extracted_text:
-        raise ValueError("PDF не содержит извлекаемого текстового слоя. Нужен текстовый PDF или OCR.")
-
-    if looks_like_broken_pdf_text(extracted_text):
-        raise ValueError("PDF содержит поврежденный текстовый слой: символы извлекаются некорректно. Нужен другой PDF или OCR.")
-
-    return extracted_text
+    return validate_pdf_extracted_text("\n".join(extracted_pages))
 
 def transcribe_chunk(audio_data, samplerate, recognizer):
     try:
