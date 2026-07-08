@@ -34,6 +34,19 @@ window.addEventListener('DOMContentLoaded', () => {
   const historyList = document.getElementById('history-list');
   const historyMeta = document.getElementById('history-meta');
   const btnHistoryClear = document.getElementById('btn-history-clear');
+  const cloudProviderCards = document.querySelectorAll('[data-provider-id]');
+  const cloudPanel = document.getElementById('cloud-panel');
+  const cloudPanelTitle = document.getElementById('cloud-panel-title');
+  const cloudStatus = document.getElementById('cloud-status');
+  const cloudSetupNote = document.getElementById('cloud-setup-note');
+  const cloudSearchRow = document.getElementById('cloud-search-row');
+  const cloudSearchInput = document.getElementById('cloud-search-input');
+  const btnCloudSearch = document.getElementById('btn-cloud-search');
+  const btnCloudConnect = document.getElementById('btn-cloud-connect');
+  const btnCloudRefresh = document.getElementById('btn-cloud-refresh');
+  const cloudFileList = document.getElementById('cloud-file-list');
+  const cloudPagination = document.getElementById('cloud-pagination');
+  const btnCloudLoadMore = document.getElementById('btn-cloud-load-more');
 
   let fullText = '';
   let textHistory = [];
@@ -49,6 +62,12 @@ window.addEventListener('DOMContentLoaded', () => {
   let sentenceTimings = [];
   let visualSentenceSpans = [];
   let lastActiveIndex = -1;
+  let cloudProviders = [];
+  let activeCloudProviderId = '';
+  let activeCloudQuery = '';
+  let isCloudBusy = false;
+  const cloudFilesByProvider = new Map();
+  const cloudNextPageTokenByProvider = new Map();
 
   function getPlaybackRate() {
     return rateSlider ? parseFloat(rateSlider.value) : 1;
@@ -309,6 +328,258 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     return Boolean(fullText);
+  }
+
+  function getCloudProvider(providerId = activeCloudProviderId) {
+    return cloudProviders.find((provider) => provider.id === providerId) || null;
+  }
+
+  function formatCloudFileTimestamp(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(date);
+  }
+
+  function renderCloudEmpty(message) {
+    if (!cloudFileList) return;
+    const emptyNode = document.createElement('div');
+    emptyNode.className = 'cloud-empty';
+    emptyNode.textContent = message;
+    cloudFileList.replaceChildren(emptyNode);
+  }
+
+  function revealCloudPanel() {
+    if (!cloudPanel || !cloudPanel.classList.contains('active')) return;
+    cloudPanel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function setCloudBusy(nextBusy) {
+    isCloudBusy = nextBusy;
+    if (btnCloudConnect) btnCloudConnect.disabled = nextBusy;
+    if (btnCloudRefresh) btnCloudRefresh.disabled = nextBusy;
+    if (btnCloudSearch) btnCloudSearch.disabled = nextBusy;
+    if (btnCloudLoadMore) btnCloudLoadMore.disabled = nextBusy;
+    if (cloudSearchInput) cloudSearchInput.disabled = nextBusy;
+  }
+
+  function renderCloudPanel() {
+    if (!cloudPanel) return;
+
+    cloudProviderCards.forEach((card) => {
+      card.classList.toggle('active', card.dataset.providerId === activeCloudProviderId);
+    });
+
+    const provider = getCloudProvider();
+    if (!provider) {
+      cloudPanel.classList.remove('active');
+      return;
+    }
+
+    cloudPanel.classList.add('active');
+    if (cloudPanelTitle) cloudPanelTitle.textContent = provider.name || 'Облачный импорт';
+    if (cloudStatus) cloudStatus.textContent = provider.setupHint || 'Выберите действие.';
+
+    const canConnect = provider.id === 'google-drive' && provider.configured;
+    if (btnCloudConnect) {
+      btnCloudConnect.hidden = !canConnect;
+      btnCloudConnect.textContent = provider.connected ? 'Переподключить' : 'Подключить';
+    }
+
+    if (btnCloudRefresh) {
+      btnCloudRefresh.hidden = provider.id !== 'google-drive' || !provider.configured;
+    }
+
+    const canSearch = provider.id === 'google-drive' && provider.configured && provider.connected;
+    if (cloudSearchRow) cloudSearchRow.hidden = !canSearch;
+
+    if (cloudSetupNote) {
+      cloudSetupNote.hidden = !provider.setupHint;
+      cloudSetupNote.textContent = provider.setupHint || '';
+    }
+
+    if (cloudPagination) {
+      cloudPagination.hidden = !cloudNextPageTokenByProvider.get(provider.id);
+    }
+
+    const files = cloudFilesByProvider.get(provider.id) || [];
+    if (!provider.configured || provider.planned) {
+      renderCloudEmpty(provider.setupHint || 'Интеграция пока недоступна.');
+      return;
+    }
+
+    if (!provider.connected && files.length === 0) {
+      renderCloudEmpty('Подключите аккаунт, чтобы увидеть доступные файлы.');
+      return;
+    }
+
+    if (files.length === 0) {
+      renderCloudEmpty('Файлы не найдены. Попробуйте другой запрос или обновите список.');
+      return;
+    }
+
+    cloudFileList.replaceChildren();
+    files.forEach((file) => {
+      const row = document.createElement('div');
+      row.className = 'cloud-file-row';
+
+      const textWrap = document.createElement('div');
+      const nameNode = document.createElement('div');
+      nameNode.className = 'cloud-file-name';
+      nameNode.textContent = file.name || 'Без названия';
+
+      const metaNode = document.createElement('div');
+      metaNode.className = 'cloud-file-meta';
+      const extensionLabel = file.extension ? `.${file.extension}` : file.importKind;
+      metaNode.textContent = `${extensionLabel} · ${formatCloudFileTimestamp(file.modifiedTime)}`;
+      textWrap.append(nameNode, metaNode);
+
+      const importButton = document.createElement('button');
+      importButton.type = 'button';
+      importButton.className = 'cloud-import-btn';
+      importButton.textContent = 'Импорт';
+      importButton.disabled = isCloudBusy;
+      importButton.addEventListener('click', () => {
+        void importCloudFileEntry(file);
+      });
+
+      row.append(textWrap, importButton);
+      cloudFileList.appendChild(row);
+    });
+  }
+
+  async function refreshCloudProvidersState() {
+    if (!smartReader.getCloudProvidersState) return;
+    const providersResult = await smartReader.getCloudProvidersState();
+    if (!providersResult.ok) {
+      console.error(providersResult.error);
+      return;
+    }
+
+    cloudProviders = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+    if (activeCloudProviderId && !getCloudProvider(activeCloudProviderId)) {
+      activeCloudProviderId = '';
+    }
+    renderCloudPanel();
+  }
+
+  async function loadCloudFiles(options = {}) {
+    const { append = false } = options;
+    const provider = getCloudProvider();
+    if (!provider || provider.id !== 'google-drive') return;
+
+    setCloudBusy(true);
+    if (cloudStatus) cloudStatus.textContent = append ? 'Загружаю ещё файлы из Google Drive...' : 'Загружаю файлы из Google Drive...';
+
+    try {
+      const nextPageToken = append ? (cloudNextPageTokenByProvider.get(provider.id) || '') : '';
+      const filesResult = await smartReader.listCloudFiles(provider.id, activeCloudQuery, nextPageToken);
+
+      if (!filesResult.ok) {
+        cloudProviders = cloudProviders.map((entry) => entry.id === provider.id ? { ...entry, connected: false } : entry);
+        cloudFilesByProvider.set(provider.id, []);
+        cloudNextPageTokenByProvider.set(provider.id, '');
+        if (cloudStatus) cloudStatus.textContent = filesResult.error || 'Не удалось загрузить файлы.';
+        renderCloudPanel();
+        return;
+      }
+
+      const currentFiles = append ? (cloudFilesByProvider.get(provider.id) || []) : [];
+      cloudFilesByProvider.set(provider.id, currentFiles.concat(filesResult.files || []));
+      cloudNextPageTokenByProvider.set(provider.id, filesResult.nextPageToken || '');
+      cloudProviders = cloudProviders.map((entry) => entry.id === provider.id ? { ...entry, ...filesResult.provider, connected: true } : entry);
+      if (cloudStatus) cloudStatus.textContent = `Google Drive: ${cloudFilesByProvider.get(provider.id).length} файлов готовы к импорту.`;
+      renderCloudPanel();
+    } finally {
+      setCloudBusy(false);
+    }
+  }
+
+  async function openCloudProvider(providerId, options = {}) {
+    const { reloadFiles = false } = options;
+    activeCloudProviderId = providerId;
+    activeCloudQuery = '';
+    if (cloudSearchInput) cloudSearchInput.value = '';
+    renderCloudPanel();
+    revealCloudPanel();
+    await refreshCloudProvidersState();
+    revealCloudPanel();
+
+    const provider = getCloudProvider(providerId);
+    if (!provider) return;
+
+    if (provider.id === 'google-drive' && provider.configured && provider.connected) {
+      const cachedFiles = cloudFilesByProvider.get(provider.id) || [];
+      if (reloadFiles || cachedFiles.length === 0) {
+        await loadCloudFiles();
+      } else {
+        if (cloudStatus) cloudStatus.textContent = `Google Drive: ${cachedFiles.length} файлов готовы к импорту.`;
+        renderCloudPanel();
+        revealCloudPanel();
+      }
+    }
+  }
+
+  async function connectActiveCloudProvider() {
+    const provider = getCloudProvider();
+    if (!provider) return;
+
+    setCloudBusy(true);
+    if (cloudStatus) cloudStatus.textContent = `Подключаю ${provider.name}...`;
+
+    try {
+      const connectResult = await smartReader.connectCloudProvider(provider.id);
+      if (!connectResult.ok) {
+        if (cloudStatus) cloudStatus.textContent = connectResult.error || `Не удалось подключить ${provider.name}.`;
+        return;
+      }
+
+      await refreshCloudProvidersState();
+      await openCloudProvider(provider.id, { reloadFiles: true });
+    } finally {
+      setCloudBusy(false);
+    }
+  }
+
+  async function searchActiveCloudFiles() {
+    const provider = getCloudProvider();
+    if (!provider || provider.id !== 'google-drive') return;
+
+    activeCloudQuery = cloudSearchInput ? cloudSearchInput.value.trim() : '';
+    cloudFilesByProvider.set(provider.id, []);
+    cloudNextPageTokenByProvider.set(provider.id, '');
+    await loadCloudFiles();
+  }
+
+  async function importCloudFileEntry(file) {
+    const provider = getCloudProvider();
+    if (!provider) return;
+
+    setCloudBusy(true);
+    renderImportState(`${provider.name}: готовлю файл ${file.name}...`, '#2f54eb');
+    setStatus(`${provider.name}: импорт...`);
+
+    try {
+      const importResult = await smartReader.importCloudFile(provider.id, file.id);
+      if (!importResult.ok) {
+        showProcessingError(importResult.error, `${provider.name} не импортирован.`, {
+          failureTitle: `${provider.name} не импортирован`,
+          failureAction: 'Проверьте подключение аккаунта или попробуйте выбрать другой файл.',
+          reopenUploadModal: true
+        });
+        return;
+      }
+
+      await processUploadedFile(importResult.filePath);
+    } finally {
+      setCloudBusy(false);
+      await refreshCloudProvidersState();
+    }
   }
 
   function renderImportState(message, color = '#2f54eb') {
@@ -885,7 +1156,10 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   if (btnTriggerUpload && uploadModal && btnModalClose) {
-    btnTriggerUpload.addEventListener('click', () => uploadModal.classList.add('active'));
+    btnTriggerUpload.addEventListener('click', async () => {
+      uploadModal.classList.add('active');
+      await refreshCloudProvidersState();
+    });
     btnModalClose.addEventListener('click', () => {
       uploadModal.classList.remove('active');
       clearImportInputs();
@@ -896,6 +1170,55 @@ window.addEventListener('DOMContentLoaded', () => {
         uploadModal.classList.remove('active');
         clearImportInputs();
       }
+    });
+  }
+
+  cloudProviderCards.forEach((card) => {
+    card.addEventListener('click', () => {
+      const providerId = card.dataset.providerId;
+      if (providerId) {
+        void openCloudProvider(providerId);
+      }
+    });
+  });
+
+  const dropboxCard = document.getElementById('cloud-dropbox');
+  if (dropboxCard) {
+    dropboxCard.addEventListener('click', () => {
+      alert('Dropbox пока не входит в Stage 2. Сначала включаем Google Drive и OneDrive-ready contract.');
+    });
+  }
+
+  if (btnCloudConnect) {
+    btnCloudConnect.addEventListener('click', () => {
+      void connectActiveCloudProvider();
+    });
+  }
+
+  if (btnCloudRefresh) {
+    btnCloudRefresh.addEventListener('click', () => {
+      void openCloudProvider(activeCloudProviderId, { reloadFiles: true });
+    });
+  }
+
+  if (btnCloudSearch) {
+    btnCloudSearch.addEventListener('click', () => {
+      void searchActiveCloudFiles();
+    });
+  }
+
+  if (cloudSearchInput) {
+    cloudSearchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void searchActiveCloudFiles();
+      }
+    });
+  }
+
+  if (btnCloudLoadMore) {
+    btnCloudLoadMore.addEventListener('click', () => {
+      void loadCloudFiles({ append: true });
     });
   }
 
@@ -1291,4 +1614,5 @@ window.addEventListener('DOMContentLoaded', () => {
 
   renderCurrentText();
   void loadTextHistory();
+  void refreshCloudProvidersState();
 });

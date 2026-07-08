@@ -190,9 +190,51 @@
       justify-content: center; gap: 8px; cursor: pointer; position: relative; transition: all 0.2s ease;
     }
     .cloud-card:hover { background-color: #f1f2f6; transform: translateY(-2px); }
+    .cloud-card.active { border-color: #2f54eb; background-color: #f5f8ff; box-shadow: inset 0 0 0 1px #2f54eb; }
     .cloud-card .cloud-logo { width: 28px; height: 28px; }
     .cloud-card .cloud-name { font-size: 12px; font-weight: 600; color: #2f3542; }
     .cloud-card-menu { position: absolute; top: 8px; right: 12px; color: #a4b0be; font-size: 12px; }
+    .cloud-panel {
+      margin-top: 14px; padding: 14px; border: 1px solid #dfe4ea; border-radius: 12px;
+      background-color: #fafbfc; display: none; flex-direction: column; gap: 12px;
+    }
+    .cloud-panel.active { display: flex; }
+    .cloud-panel-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .cloud-panel-title { font-size: 14px; font-weight: 700; color: #2f3542; }
+    .cloud-panel-actions { display: flex; align-items: center; gap: 8px; }
+    .cloud-panel-btn {
+      padding: 8px 12px; border-radius: 8px; border: 1px solid #ced6e0; background-color: #ffffff;
+      color: #2f3542; font-size: 12px; font-weight: 700;
+    }
+    .cloud-panel-btn.primary { background-color: #2f54eb; border-color: #2f54eb; color: #ffffff; }
+    .cloud-panel-btn:disabled { opacity: 0.6; }
+    .cloud-panel-btn[hidden],
+    .cloud-search-row[hidden],
+    .cloud-pagination[hidden],
+    .cloud-setup-note[hidden] { display: none !important; }
+    .cloud-status { font-size: 12px; line-height: 1.5; color: #57606f; }
+    .cloud-search-row { display: flex; gap: 10px; }
+    .cloud-search-input {
+      flex: 1; padding: 9px 12px; border: 1px solid #ced6e0; border-radius: 8px; outline: none; font-size: 13px;
+      background-color: #ffffff;
+    }
+    .cloud-search-input:focus { border-color: #2f54eb; }
+    .cloud-list { display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto; }
+    .cloud-empty { font-size: 12px; color: #8c98a4; line-height: 1.5; padding: 6px 0; }
+    .cloud-file-row {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center;
+      padding: 10px 12px; border: 1px solid #e4e7eb; border-radius: 10px; background-color: #ffffff;
+    }
+    .cloud-file-name { font-size: 13px; font-weight: 600; color: #2f3542; margin-bottom: 4px; word-break: break-word; }
+    .cloud-file-meta { font-size: 11px; color: #747d8c; }
+    .cloud-import-btn {
+      padding: 8px 12px; border-radius: 8px; border: none; background-color: #2ed573; color: #ffffff; font-size: 12px; font-weight: 700;
+    }
+    .cloud-pagination { display: flex; justify-content: flex-end; }
+    .cloud-setup-note {
+      font-size: 12px; line-height: 1.55; color: #57606f; padding: 10px 12px; border-radius: 8px;
+      background-color: #ffffff; border: 1px dashed #dfe4ea;
+    }
   </style>
 </head>
 <body>
@@ -294,20 +336,42 @@
         </div>
         
         <div class="integrations-grid">
-          <div class="cloud-card" onclick="alert('Интеграция с Google Диск находится в разработке!')">
+          <button class="cloud-card" id="cloud-google-drive" data-provider-id="google-drive" type="button">
             <div class="cloud-card-menu">&#8226;&#8226;&#8226;</div>
             <svg class="cloud-logo" viewBox="0 0 24 24"><path fill="#00AA4A" d="M15.4 15.2L9.3 4.7H3.2l6.1 10.5z"/><path fill="#21A0F2" d="M20.8 15.2h-12.2l3-5.2h12.2z"/><path fill="#FFD200" d="M14.7 10L9.3 19.3h6.1l5.4-9.3z"/></svg>
             <div class="cloud-name">Google Диск</div>
-          </div>
-          <div class="cloud-card" onclick="alert('Интеграция с Dropbox находится в разработке!')">
+          </button>
+          <button class="cloud-card" id="cloud-dropbox" type="button">
             <div class="cloud-card-menu">&#8226;&#8226;&#8226;</div>
             <svg class="cloud-logo" viewBox="0 0 24 24" fill="#0061FE"><path d="M6 2l6 4-6 4-6-4zm12 0l6 4-6 4-6-4zm-12 12l6-4 6 4-6 4zm12 0l6-4 6 4-6 4zm-6 5.5l6-4 6 4-12 4.5-12-4.5z"/></svg>
             <div class="cloud-name">Dropbox</div>
-          </div>
-          <div class="cloud-card" onclick="alert('Integraciya s OneDrive v razrabotke!')">
+          </button>
+          <button class="cloud-card" id="cloud-one-drive" data-provider-id="one-drive" type="button">
             <div class="cloud-card-menu">&#8226;&#8226;&#8226;</div>
             <svg class="cloud-logo" viewBox="0 0 24 24" fill="#0078D4"><path d="M18.5 10c-1.4 0-2.6.8-3.2 2-1-.7-2.2-1-3.5-1-2.6 0-4.8 1.9-5.2 4.4-.7-.3-1.4-.4-2.1-.4-2.5 0-4.5 2-4.5 4.5S2 24 4.5 24h14c3 0 5.5-2.5 5.5-5.5s-2.5-5.5-5.5-5.5c0-1.7-1.3-3-3-3z"/></svg>
             <div class="cloud-name">OneDrive</div>
+          </button>
+        </div>
+
+        <div class="cloud-panel" id="cloud-panel">
+          <div class="cloud-panel-header">
+            <div class="cloud-panel-title" id="cloud-panel-title">Облачный импорт</div>
+            <div class="cloud-panel-actions">
+              <button class="cloud-panel-btn primary" id="btn-cloud-connect" type="button">Подключить</button>
+              <button class="cloud-panel-btn" id="btn-cloud-refresh" type="button">Обновить</button>
+            </div>
+          </div>
+          <div class="cloud-status" id="cloud-status">Выберите облачный источник.</div>
+          <div class="cloud-setup-note" id="cloud-setup-note" hidden></div>
+          <div class="cloud-search-row" id="cloud-search-row" hidden>
+            <input type="text" id="cloud-search-input" class="cloud-search-input" placeholder="Поиск по имени файла...">
+            <button class="cloud-panel-btn" id="btn-cloud-search" type="button">Найти</button>
+          </div>
+          <div class="cloud-list" id="cloud-file-list">
+            <div class="cloud-empty">Выберите Google Drive или OneDrive.</div>
+          </div>
+          <div class="cloud-pagination" id="cloud-pagination" hidden>
+            <button class="cloud-panel-btn" id="btn-cloud-load-more" type="button">Показать ещё</button>
           </div>
         </div>
       </div>
