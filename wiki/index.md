@@ -7,6 +7,7 @@
 - [[synthesis]]
 
 ## Active Notes
+- [[synthesis/TRANSLATOR_STAGE4]]
 - [[synthesis/CLOUD_IMPORT_STAGE3_ONEDRIVE]]
 - [[synthesis/CLOUD_IMPORT_STAGE2]]
 - [[synthesis/IMPORT_UX_REGRESSION_CHECKLIST]]

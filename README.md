@@ -9,6 +9,7 @@
 - audio file transcription
 - text extraction from `pdf`, `docx`, and `epub`
 - cloud import from Google Drive and OneDrive for supported text, document, subtitle, audio, and PDF files
+- translation of the current text buffer through a main-process translator provider
 - subtitle extraction from supported YouTube links
 - manual transcript/subtitle fallback from `.txt`, `.vtt`, `.srt`, or pasted transcript text
 
@@ -66,6 +67,7 @@ Prerequisites:
 - Google Drive tokens and imported temp files are stored under the Electron user-data runtime folder in `cloud-runtime/`.
 - OneDrive import uses a public-client app registration with `Files.Read` and `offline_access`; config can come from `onedrive_oauth_client.json` next to the app or from `TTV_ONEDRIVE_*` environment variables.
 - OneDrive tokens share the same Electron user-data runtime folder in `cloud-runtime/`.
+- Translation runs through the Electron main process with a switchable provider (`DeepL` or `LibreTranslate`). The renderer never holds translator secrets directly.
 - YouTube import now prefers `yt-dlp` with browser cookies from local Chromium browsers and falls back to `youtube-transcript-api` when browser-backed extraction is unavailable.
 - If Chrome is open, Windows may lock the Chrome `Cookies` database. In that case, close Chrome and retry the YouTube import.
 - If Chromium cookies cannot be decrypted on Windows, export YouTube cookies in Netscape `cookies.txt` format and place the file next to the app as `youtube_cookies.txt`, or point `TTV_YOUTUBE_COOKIES_FILE` to it.
@@ -115,3 +117,60 @@ Environment variable overrides:
 - `TTV_ONEDRIVE_GRAPH_BASE_URL`
 - `TTV_ONEDRIVE_SCOPES`
 - `TTV_ONEDRIVE_CONFIG_FILE`
+
+## Translator Setup
+
+Stage 4 supports two translator providers behind the same UI contract: `DeepL` and `LibreTranslate`. Configure the active provider either through environment variables or through `translator_config.json` next to the app.
+
+Example `translator_config.json` for DeepL:
+
+```json
+{
+  "provider": "deepl",
+  "deepl": {
+    "authKey": "YOUR_DEEPL_AUTH_KEY",
+    "apiUrl": "https://api-free.deepl.com"
+  },
+  "defaultSourceLanguage": "AUTO",
+  "defaultTargetLanguage": "EN"
+}
+```
+
+Example `translator_config.json` for LibreTranslate:
+
+```json
+{
+  "provider": "libretranslate",
+  "libretranslate": {
+    "apiUrl": "http://127.0.0.1:5000",
+    "apiKey": "",
+    "maxCharsPerRequest": 4000
+  },
+  "defaultSourceLanguage": "AUTO",
+  "defaultTargetLanguage": "EN"
+}
+```
+
+Backward compatibility note:
+
+- the legacy flat DeepL shape (`authKey`, `apiUrl` at the top level) still works
+- LibreTranslate also accepts a flat shape (`apiUrl`, `apiKey`) when `provider` is `libretranslate`
+
+Environment variable overrides:
+
+- `TTV_TRANSLATOR_CONFIG_FILE`
+- `TTV_TRANSLATOR_PROVIDER`
+- `TTV_DEEPL_AUTH_KEY`
+- `TTV_DEEPL_API_URL`
+- `TTV_LIBRETRANSLATE_API_URL`
+- `TTV_LIBRETRANSLATE_API_KEY`
+- `TTV_LIBRETRANSLATE_MAX_CHARS_PER_REQUEST`
+- `TTV_TRANSLATOR_DEFAULT_SOURCE_LANGUAGE`
+- `TTV_TRANSLATOR_DEFAULT_TARGET_LANGUAGE`
+
+Current translator UI behavior:
+
+- source and target language selectors live in the editor bar
+- `🌐 Перевести` translates the current text buffer
+- the translated result is saved as a separate history row, so the original text is not overwritten
+- provider switching happens only in config; the UI does not change between `DeepL` and `LibreTranslate`

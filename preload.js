@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('smartReader', {
   upsertTextHistory: (entry) => ipcRenderer.invoke('upsert-text-history', entry),
   deleteTextHistoryEntry: (entryId) => ipcRenderer.invoke('delete-text-history-entry', entryId),
   clearTextHistory: () => ipcRenderer.invoke('clear-text-history'),
+  getTranslationState: () => ipcRenderer.invoke('get-translation-state'),
+  translateText: (request) => ipcRenderer.invoke('translate-text', request),
   getCloudProvidersState: () => ipcRenderer.invoke('get-cloud-providers-state'),
   connectCloudProvider: (providerId) => ipcRenderer.invoke('connect-cloud-provider', providerId),
   listCloudFiles: (providerId, query, pageToken) => ipcRenderer.invoke('list-cloud-files', providerId, query, pageToken),

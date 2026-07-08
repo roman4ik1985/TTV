@@ -14,6 +14,9 @@ window.addEventListener('DOMContentLoaded', () => {
   const btnItalic = document.getElementById('btn-italic');
   const btnList = document.getElementById('btn-list');
   const btnDictionary = document.getElementById('btn-dictionary');
+  const translateSourceLanguage = document.getElementById('translate-source-language');
+  const translateTargetLanguage = document.getElementById('translate-target-language');
+  const btnTranslate = document.getElementById('btn-translate');
   const cntChars = document.getElementById('cnt-chars');
   const cntWords = document.getElementById('cnt-words');
   const lblStatus = document.getElementById('lbl-status');
@@ -62,12 +65,34 @@ window.addEventListener('DOMContentLoaded', () => {
   let sentenceTimings = [];
   let visualSentenceSpans = [];
   let lastActiveIndex = -1;
+  let translationState = {
+    provider: 'deepl',
+    providerName: 'DeepL',
+    configured: false,
+    defaultSourceLanguage: 'AUTO',
+    defaultTargetLanguage: 'EN',
+    setupHint: ''
+  };
+  let isTranslateBusy = false;
   let cloudProviders = [];
   let activeCloudProviderId = '';
   let activeCloudQuery = '';
   let isCloudBusy = false;
   const cloudFilesByProvider = new Map();
   const cloudNextPageTokenByProvider = new Map();
+
+  const TRANSLATION_LANGUAGE_OPTIONS = [
+    { value: 'AUTO', label: 'Авто' },
+    { value: 'RU', label: 'Русский' },
+    { value: 'UK', label: 'Украинский' },
+    { value: 'EN', label: 'Английский' },
+    { value: 'DE', label: 'Немецкий' },
+    { value: 'FR', label: 'Французский' },
+    { value: 'ES', label: 'Испанский' },
+    { value: 'IT', label: 'Итальянский' },
+    { value: 'PL', label: 'Польский' },
+    { value: 'PT-BR', label: 'Португальский (BR)' }
+  ];
 
   function getPlaybackRate() {
     return rateSlider ? parseFloat(rateSlider.value) : 1;
@@ -135,6 +160,42 @@ window.addEventListener('DOMContentLoaded', () => {
     }).format(date);
   }
 
+  function getTranslationLanguageLabel(value) {
+    return TRANSLATION_LANGUAGE_OPTIONS.find((entry) => entry.value === value)?.label || value;
+  }
+
+  function fillLanguageSelect(selectNode, options = {}) {
+    if (!selectNode) return;
+
+    const { includeAuto = false, selectedValue = '' } = options;
+    const optionNodes = TRANSLATION_LANGUAGE_OPTIONS
+      .filter((entry) => includeAuto || entry.value !== 'AUTO')
+      .map((entry) => {
+        const optionNode = document.createElement('option');
+        optionNode.value = entry.value;
+        optionNode.textContent = entry.label;
+        return optionNode;
+      });
+
+    selectNode.replaceChildren(...optionNodes);
+    selectNode.value = optionNodes.some((entry) => entry.value === selectedValue)
+      ? selectedValue
+      : optionNodes[0]?.value || '';
+  }
+
+  function setTranslateBusy(nextBusy) {
+    isTranslateBusy = nextBusy;
+    if (translateSourceLanguage) translateSourceLanguage.disabled = nextBusy;
+    if (translateTargetLanguage) translateTargetLanguage.disabled = nextBusy;
+    if (btnTranslate) btnTranslate.disabled = nextBusy || !fullText;
+  }
+
+  function syncTranslateControls() {
+    if (!btnTranslate) return;
+    btnTranslate.disabled = isTranslateBusy || !fullText;
+    btnTranslate.title = translationState.setupHint || 'Перевести текущий текст';
+  }
+
   function renderEmptyWorkspace() {
     renderTextMessage('Приложение готово. Вставьте текст, начните диктовку или импортируйте файл.', {
       color: '#a4b0be',
@@ -166,6 +227,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!textContainer) return;
 
     if (!fullText) {
+      syncTranslateControls();
       textContainer.classList.remove('listen-mode');
       if (currentMode === 'listen') {
         renderListenModeState();
@@ -176,11 +238,13 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     if (currentMode === 'read') {
+      syncTranslateControls();
       textContainer.classList.remove('listen-mode');
       prepareSentenceUI(fullText);
       return;
     }
 
+    syncTranslateControls();
     renderListenModeState();
   }
 
@@ -265,13 +329,14 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  async function persistTextInHistory(text, sourceLabel, reuseActiveHistory = false) {
+  async function persistTextInHistory(text, sourceLabel, reuseActiveHistory = false, extraEntry = {}) {
     if (!smartReader.upsertTextHistory) return false;
 
     const normalizedText = getNormalizedText(text);
     if (!normalizedText) return false;
 
     const historyResult = await smartReader.upsertTextHistory({
+      ...extraEntry,
       id: reuseActiveHistory ? activeHistoryId : undefined,
       text: normalizedText,
       source: sourceLabel,
@@ -295,7 +360,8 @@ window.addEventListener('DOMContentLoaded', () => {
       saveToHistory = true,
       reuseActiveHistory = false,
       historyId = null,
-      autoSpeak = false
+      autoSpeak = false,
+      historyEntry = null
     } = options;
 
     currentTextSource = sourceLabel;
@@ -320,7 +386,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     if (saveToHistory && fullText) {
-      await persistTextInHistory(fullText, sourceLabel, reuseActiveHistory);
+      await persistTextInHistory(fullText, sourceLabel, reuseActiveHistory, historyEntry || {});
     }
 
     if (autoSpeak && fullText) {
@@ -328,6 +394,89 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     return Boolean(fullText);
+  }
+
+  async function refreshTranslationState() {
+    if (!smartReader.getTranslationState) return;
+
+    const translationResult = await smartReader.getTranslationState();
+    if (!translationResult.ok) {
+      console.error(translationResult.error);
+      return;
+    }
+
+    translationState = {
+      ...translationState,
+      ...(translationResult.state || {})
+    };
+
+    fillLanguageSelect(translateSourceLanguage, {
+      includeAuto: true,
+      selectedValue: translationState.defaultSourceLanguage || 'AUTO'
+    });
+    fillLanguageSelect(translateTargetLanguage, {
+      selectedValue: translationState.defaultTargetLanguage || 'EN'
+    });
+    syncTranslateControls();
+  }
+
+  async function translateCurrentText() {
+    if (!smartReader.translateText) return;
+
+    if (isEditing) {
+      await exitEditMode();
+    }
+
+    if (!fullText) {
+      alert('Сначала загрузите, вставьте или продиктуйте текст.');
+      return;
+    }
+
+    const sourceLanguage = translateSourceLanguage ? translateSourceLanguage.value : 'AUTO';
+    const targetLanguage = translateTargetLanguage ? translateTargetLanguage.value : 'EN';
+    const originHistoryId = activeHistoryId;
+
+    if (sourceLanguage === targetLanguage && sourceLanguage !== 'AUTO') {
+      alert('Источник и язык перевода совпадают. Выберите другой целевой язык.');
+      return;
+    }
+
+    setTranslateBusy(true);
+    setStatus(`Перевод ${getTranslationLanguageLabel(sourceLanguage)} -> ${getTranslationLanguageLabel(targetLanguage)}...`);
+
+    try {
+      const translationResult = await smartReader.translateText({
+        text: fullText,
+        sourceLanguage,
+        targetLanguage
+      });
+
+      if (!translationResult.ok) {
+        alert(`Не удалось перевести текст: ${translationResult.error}`);
+        setStatus('Перевод не выполнен');
+        return;
+      }
+
+      const actualSourceLanguage = (translationResult.sourceLanguage || sourceLanguage || 'AUTO').toUpperCase();
+      const actualTargetLanguage = (translationResult.targetLanguage || targetLanguage || 'EN').toUpperCase();
+      const sourceLabel = `Перевод ${actualSourceLanguage} -> ${actualTargetLanguage}`;
+
+      await applyTextFromSource(translationResult.text, {
+        sourceLabel,
+        statusMessage: `${sourceLabel}: ${translationResult.text.length} символов`,
+        saveToHistory: true,
+        reuseActiveHistory: false,
+        historyEntry: {
+          sourceLanguage: actualSourceLanguage,
+          targetLanguage: actualTargetLanguage,
+          translationProvider: translationResult.provider || translationState.providerName || 'DeepL',
+          originHistoryId: originHistoryId || ''
+        }
+      });
+    } finally {
+      setTranslateBusy(false);
+      syncTranslateControls();
+    }
   }
 
   function getCloudProvider(providerId = activeCloudProviderId) {
@@ -1337,6 +1486,12 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  if (btnTranslate) {
+    btnTranslate.addEventListener('click', () => {
+      void translateCurrentText();
+    });
+  }
+
   if (modeRead && modeListen) {
     modeRead.addEventListener('click', () => {
       currentMode = 'read';
@@ -1617,6 +1772,10 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   renderCurrentText();
+  fillLanguageSelect(translateSourceLanguage, { includeAuto: true, selectedValue: 'AUTO' });
+  fillLanguageSelect(translateTargetLanguage, { selectedValue: 'EN' });
+  syncTranslateControls();
   void loadTextHistory();
+  void refreshTranslationState();
   void refreshCloudProvidersState();
 });

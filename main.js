@@ -24,6 +24,37 @@ const ONEDRIVE_PROVIDER_ID = 'one-drive';
 const GOOGLE_DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
 const ONEDRIVE_SCOPES = ['Files.Read', 'offline_access'];
 const SUPPORTED_CLOUD_IMPORT_EXTENSIONS = ['txt', 'md', 'vtt', 'srt', 'pdf', 'docx', 'epub', 'mp3', 'wav', 'ogg', 'flac'];
+const DEEPL_PROVIDER_ID = 'deepl';
+const DEEPL_DEFAULT_API_URL = 'https://api-free.deepl.com';
+const DEEPL_MAX_REQUEST_BYTES = 120 * 1024;
+const LIBRETRANSLATE_PROVIDER_ID = 'libretranslate';
+const LIBRETRANSLATE_DEFAULT_API_URL = 'http://127.0.0.1:5000';
+const LIBRETRANSLATE_DEFAULT_MAX_CHARS = 4000;
+const APP_TO_LIBRE_LANGUAGE_CODE = {
+  AUTO: 'auto',
+  RU: 'ru',
+  UK: 'uk',
+  EN: 'en',
+  DE: 'de',
+  FR: 'fr',
+  ES: 'es',
+  IT: 'it',
+  PL: 'pl',
+  'PT-BR': 'pb'
+};
+const LIBRE_TO_APP_LANGUAGE_CODE = {
+  auto: 'AUTO',
+  ru: 'RU',
+  uk: 'UK',
+  en: 'EN',
+  de: 'DE',
+  fr: 'FR',
+  es: 'ES',
+  it: 'IT',
+  pl: 'PL',
+  pt: 'PT',
+  pb: 'PT-BR'
+};
 
 const GOOGLE_EXPORT_CONFIG = {
   'application/vnd.google-apps.document': {
@@ -251,6 +282,110 @@ function getOneDriveOAuthConfig() {
     graphBaseUrl: trimTrailingSlash(process.env.TTV_ONEDRIVE_GRAPH_BASE_URL || payload.graphBaseUrl, 'https://graph.microsoft.com/v1.0'),
     scopes: Array.from(new Set(scopes.length > 0 ? scopes : ONEDRIVE_SCOPES))
   };
+}
+
+function getConfiguredTranslatorConfigPath() {
+  const candidates = [
+    process.env.TTV_TRANSLATOR_CONFIG_FILE,
+    path.join(projectDir, 'translator_config.json')
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function loadConfiguredTranslatorConfig() {
+  const configPath = getConfiguredTranslatorConfigPath();
+  if (!configPath) return { configPath: '', payload: {} };
+  return {
+    configPath,
+    payload: safeReadJson(configPath, {}) || {}
+  };
+}
+
+function normalizeTranslatorProviderId(value) {
+  const providerId = String(value || '').trim().toLowerCase();
+  if (providerId === LIBRETRANSLATE_PROVIDER_ID) return LIBRETRANSLATE_PROVIDER_ID;
+  return DEEPL_PROVIDER_ID;
+}
+
+function getTranslatorBaseConfig(payload = {}) {
+  return {
+    provider: normalizeTranslatorProviderId(process.env.TTV_TRANSLATOR_PROVIDER || payload.provider),
+    configPath: '',
+    defaultSourceLanguage: String(process.env.TTV_TRANSLATOR_DEFAULT_SOURCE_LANGUAGE || payload.defaultSourceLanguage || 'AUTO').trim().toUpperCase() || 'AUTO',
+    defaultTargetLanguage: String(process.env.TTV_TRANSLATOR_DEFAULT_TARGET_LANGUAGE || payload.defaultTargetLanguage || 'EN').trim().toUpperCase() || 'EN'
+  };
+}
+
+function getDeepLTranslatorState(payload = {}, baseState) {
+  const providerConfig = payload.deepl && typeof payload.deepl === 'object' ? payload.deepl : {};
+  const apiUrl = trimTrailingSlash(
+    process.env.TTV_DEEPL_API_URL || providerConfig.apiUrl || payload.apiUrl || payload.baseUrl,
+    DEEPL_DEFAULT_API_URL
+  );
+  const authKey = String(process.env.TTV_DEEPL_AUTH_KEY || providerConfig.authKey || payload.authKey || '').trim();
+  const configured = Boolean(authKey);
+
+  return {
+    ...baseState,
+    provider: DEEPL_PROVIDER_ID,
+    providerName: 'DeepL',
+    configured,
+    apiUrl,
+    authKey,
+    setupHint: configured
+      ? ''
+      : 'Добавьте translator_config.json с provider=deepl и authKey (или задайте TTV_DEEPL_AUTH_KEY) для DeepL API.'
+  };
+}
+
+function getLibreTranslateTranslatorState(payload = {}, baseState) {
+  const providerConfig = payload.libretranslate && typeof payload.libretranslate === 'object' ? payload.libretranslate : {};
+  const apiUrl = trimTrailingSlash(
+    process.env.TTV_LIBRETRANSLATE_API_URL || providerConfig.apiUrl || payload.apiUrl || payload.baseUrl,
+    LIBRETRANSLATE_DEFAULT_API_URL
+  );
+  const apiKey = String(process.env.TTV_LIBRETRANSLATE_API_KEY || providerConfig.apiKey || payload.apiKey || '').trim();
+  const maxCharsPerRequest = Number(
+    process.env.TTV_LIBRETRANSLATE_MAX_CHARS_PER_REQUEST
+    || providerConfig.maxCharsPerRequest
+    || payload.maxCharsPerRequest
+    || LIBRETRANSLATE_DEFAULT_MAX_CHARS
+  );
+
+  return {
+    ...baseState,
+    provider: LIBRETRANSLATE_PROVIDER_ID,
+    providerName: 'LibreTranslate',
+    configured: Boolean(apiUrl),
+    apiUrl,
+    apiKey,
+    maxCharsPerRequest: Number.isFinite(maxCharsPerRequest) && maxCharsPerRequest > 0
+      ? Math.floor(maxCharsPerRequest)
+      : LIBRETRANSLATE_DEFAULT_MAX_CHARS,
+    setupHint: apiUrl
+      ? ''
+      : 'Добавьте translator_config.json с provider=libretranslate и apiUrl (или задайте TTV_LIBRETRANSLATE_API_URL).'
+  };
+}
+
+function getTranslatorProviderState() {
+  const { configPath, payload } = loadConfiguredTranslatorConfig();
+  const baseState = {
+    ...getTranslatorBaseConfig(payload),
+    configPath
+  };
+
+  if (baseState.provider === LIBRETRANSLATE_PROVIDER_ID) {
+    return getLibreTranslateTranslatorState(payload, baseState);
+  }
+
+  return getDeepLTranslatorState(payload, baseState);
+}
+
+function getPublicTranslationState() {
+  const { authKey, apiKey, ...publicState } = getTranslatorProviderState();
+  return publicState;
 }
 
 function getGoogleDriveProviderState() {
@@ -1111,6 +1246,320 @@ async function importCloudProviderFile(providerId, fileId) {
   };
 }
 
+function splitTextByByteLimit(text, maxRequestBytes) {
+  const normalizedText = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!normalizedText) return [];
+  if (Buffer.byteLength(normalizedText, 'utf8') <= maxRequestBytes) return [normalizedText];
+
+  const paragraphs = normalizedText
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+  const chunks = [];
+  let currentChunk = '';
+
+  function pushChunk(nextChunk) {
+    if (nextChunk && nextChunk.trim()) chunks.push(nextChunk.trim());
+  }
+
+  function flushCurrent() {
+    pushChunk(currentChunk);
+    currentChunk = '';
+  }
+
+  function splitOversizedParagraph(paragraph) {
+    const sentences = paragraph
+      .split(/(?<=[.!?。！？])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+
+    if (sentences.length <= 1) {
+      const parts = [];
+      let offset = 0;
+      while (offset < paragraph.length) {
+        let end = Math.min(paragraph.length, offset + 2000);
+        while (end < paragraph.length && Buffer.byteLength(paragraph.slice(offset, end), 'utf8') > maxRequestBytes) {
+          end -= 100;
+        }
+        if (end <= offset) end = Math.min(paragraph.length, offset + 1000);
+        parts.push(paragraph.slice(offset, end).trim());
+        offset = end;
+      }
+      return parts.filter(Boolean);
+    }
+
+    const sentenceChunks = [];
+    let sentenceChunk = '';
+    sentences.forEach((sentence) => {
+      const candidate = sentenceChunk ? `${sentenceChunk} ${sentence}` : sentence;
+      if (Buffer.byteLength(candidate, 'utf8') > maxRequestBytes) {
+        if (sentenceChunk) sentenceChunks.push(sentenceChunk.trim());
+        sentenceChunk = sentence;
+      } else {
+        sentenceChunk = candidate;
+      }
+    });
+    if (sentenceChunk) sentenceChunks.push(sentenceChunk.trim());
+    return sentenceChunks.filter(Boolean);
+  }
+
+  paragraphs.forEach((paragraph) => {
+    const paragraphText = paragraph.trim();
+    if (!paragraphText) return;
+
+    if (Buffer.byteLength(paragraphText, 'utf8') > maxRequestBytes) {
+      flushCurrent();
+      splitOversizedParagraph(paragraphText).forEach((part) => pushChunk(part));
+      return;
+    }
+
+    const candidate = currentChunk ? `${currentChunk}\n\n${paragraphText}` : paragraphText;
+    if (Buffer.byteLength(candidate, 'utf8') > maxRequestBytes) {
+      flushCurrent();
+      currentChunk = paragraphText;
+    } else {
+      currentChunk = candidate;
+    }
+  });
+
+  flushCurrent();
+  return chunks;
+}
+
+function splitTextByCharacterLimit(text, maxChars) {
+  const normalizedText = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!normalizedText) return [];
+  if (normalizedText.length <= maxChars) return [normalizedText];
+
+  const paragraphs = normalizedText
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+  const chunks = [];
+  let currentChunk = '';
+
+  function pushChunk(nextChunk) {
+    if (nextChunk && nextChunk.trim()) chunks.push(nextChunk.trim());
+  }
+
+  function flushCurrent() {
+    pushChunk(currentChunk);
+    currentChunk = '';
+  }
+
+  function splitOversizedParagraph(paragraph) {
+    const sentences = paragraph
+      .split(/(?<=[.!?。！？])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+
+    if (sentences.length <= 1) {
+      const parts = [];
+      let offset = 0;
+      while (offset < paragraph.length) {
+        parts.push(paragraph.slice(offset, offset + maxChars).trim());
+        offset += maxChars;
+      }
+      return parts.filter(Boolean);
+    }
+
+    const sentenceChunks = [];
+    let sentenceChunk = '';
+    sentences.forEach((sentence) => {
+      const candidate = sentenceChunk ? `${sentenceChunk} ${sentence}` : sentence;
+      if (candidate.length > maxChars) {
+        if (sentenceChunk) sentenceChunks.push(sentenceChunk.trim());
+        sentenceChunk = sentence;
+      } else {
+        sentenceChunk = candidate;
+      }
+    });
+    if (sentenceChunk) sentenceChunks.push(sentenceChunk.trim());
+    return sentenceChunks.filter(Boolean);
+  }
+
+  paragraphs.forEach((paragraph) => {
+    if (paragraph.length > maxChars) {
+      flushCurrent();
+      splitOversizedParagraph(paragraph).forEach((part) => pushChunk(part));
+      return;
+    }
+
+    const candidate = currentChunk ? `${currentChunk}\n\n${paragraph}` : paragraph;
+    if (candidate.length > maxChars) {
+      flushCurrent();
+      currentChunk = paragraph;
+    } else {
+      currentChunk = candidate;
+    }
+  });
+
+  flushCurrent();
+  return chunks;
+}
+
+function mapAppLanguageCodeToLibre(languageCode, kind) {
+  const normalizedLanguageCode = String(languageCode || '').trim().toUpperCase();
+  const providerLanguageCode = APP_TO_LIBRE_LANGUAGE_CODE[normalizedLanguageCode];
+  if (providerLanguageCode) return providerLanguageCode;
+
+  throw new Error(`LibreTranslate не поддерживает выбранный ${kind}: ${normalizedLanguageCode || 'UNKNOWN'}.`);
+}
+
+function mapLibreLanguageCodeToApp(languageCode, fallbackLanguageCode) {
+  const normalizedLanguageCode = String(languageCode || '').trim().toLowerCase();
+  if (LIBRE_TO_APP_LANGUAGE_CODE[normalizedLanguageCode]) {
+    return LIBRE_TO_APP_LANGUAGE_CODE[normalizedLanguageCode];
+  }
+
+  return String(fallbackLanguageCode || '').trim().toUpperCase() || 'AUTO';
+}
+
+async function translateWithDeepL(text, sourceLanguage, targetLanguage) {
+  const translatorState = getTranslatorProviderState();
+  if (!translatorState.configured) {
+    throw new Error(translatorState.setupHint);
+  }
+
+  const textChunks = splitTextByByteLimit(text, DEEPL_MAX_REQUEST_BYTES);
+  if (textChunks.length === 0) {
+    throw new Error('Нет текста для перевода.');
+  }
+
+  const translatedChunks = [];
+  let detectedSourceLanguage = sourceLanguage === 'AUTO' ? '' : sourceLanguage;
+
+  for (const textChunk of textChunks) {
+    const requestBody = {
+      text: [textChunk],
+      target_lang: targetLanguage
+    };
+
+    if (sourceLanguage !== 'AUTO') {
+      requestBody.source_lang = sourceLanguage;
+    }
+
+    const response = await fetch(`${translatorState.apiUrl}/v2/translate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `DeepL-Auth-Key ${translatorState.authKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const details = payload?.message || payload?.detail || `DeepL translation failed with HTTP ${response.status}.`;
+      throw new Error(details);
+    }
+
+    const translation = Array.isArray(payload.translations) ? payload.translations[0] : null;
+    if (!translation?.text) {
+      throw new Error('DeepL вернул пустой результат перевода.');
+    }
+
+    translatedChunks.push(translation.text);
+    if (!detectedSourceLanguage && translation.detected_source_language) {
+      detectedSourceLanguage = translation.detected_source_language;
+    }
+  }
+
+  return {
+    text: translatedChunks.join('\n\n').trim(),
+    provider: translatorState.providerName,
+    sourceLanguage: detectedSourceLanguage || sourceLanguage,
+    targetLanguage
+  };
+}
+
+async function translateWithLibreTranslate(text, sourceLanguage, targetLanguage) {
+  const translatorState = getTranslatorProviderState();
+  if (!translatorState.configured) {
+    throw new Error(translatorState.setupHint);
+  }
+
+  const libreSourceLanguage = mapAppLanguageCodeToLibre(sourceLanguage, 'язык источника');
+  const libreTargetLanguage = mapAppLanguageCodeToLibre(targetLanguage, 'язык перевода');
+  const textChunks = splitTextByCharacterLimit(text, translatorState.maxCharsPerRequest || LIBRETRANSLATE_DEFAULT_MAX_CHARS);
+  if (textChunks.length === 0) {
+    throw new Error('Нет текста для перевода.');
+  }
+
+  const translatedChunks = [];
+  let detectedSourceLanguage = sourceLanguage === 'AUTO' ? '' : sourceLanguage;
+
+  for (const textChunk of textChunks) {
+    const requestBody = {
+      q: textChunk,
+      source: libreSourceLanguage,
+      target: libreTargetLanguage,
+      format: 'text'
+    };
+
+    if (translatorState.apiKey) {
+      requestBody.api_key = translatorState.apiKey;
+    }
+
+    const response = await fetch(`${translatorState.apiUrl}/translate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const details = payload?.error || payload?.message || `LibreTranslate translation failed with HTTP ${response.status}.`;
+      throw new Error(details);
+    }
+
+    if (!payload?.translatedText) {
+      throw new Error('LibreTranslate вернул пустой результат перевода.');
+    }
+
+    translatedChunks.push(String(payload.translatedText).trim());
+    if (!detectedSourceLanguage && payload?.detectedLanguage?.language) {
+      detectedSourceLanguage = mapLibreLanguageCodeToApp(payload.detectedLanguage.language, sourceLanguage);
+    }
+  }
+
+  return {
+    text: translatedChunks.join('\n\n').trim(),
+    provider: translatorState.providerName,
+    sourceLanguage: detectedSourceLanguage || sourceLanguage,
+    targetLanguage
+  };
+}
+
+async function translateText(request = {}) {
+  const text = String(request.text || '').trim();
+  if (!text) {
+    throw new Error('Нечего переводить: текущий текст пуст.');
+  }
+
+  const translatorState = getTranslatorProviderState();
+  const sourceLanguage = String(request.sourceLanguage || translatorState.defaultSourceLanguage || 'AUTO').trim().toUpperCase() || 'AUTO';
+  const targetLanguage = String(request.targetLanguage || translatorState.defaultTargetLanguage || 'EN').trim().toUpperCase() || 'EN';
+
+  if (sourceLanguage === targetLanguage) {
+    throw new Error('Источник и язык перевода совпадают. Выберите другой целевой язык.');
+  }
+
+  if (translatorState.provider === DEEPL_PROVIDER_ID) {
+    return translateWithDeepL(text, sourceLanguage, targetLanguage);
+  }
+
+  if (translatorState.provider === LIBRETRANSLATE_PROVIDER_ID) {
+    return translateWithLibreTranslate(text, sourceLanguage, targetLanguage);
+  }
+
+  throw new Error(`Неподдерживаемый provider перевода: ${translatorState.provider}`);
+}
+
 function countWords(text) {
   return (text || '').trim().split(/\s+/).filter((word) => word.length > 0).length;
 }
@@ -1131,6 +1580,10 @@ function normalizeHistoryEntry(entry) {
     text,
     source,
     label,
+    sourceLanguage: typeof entry.sourceLanguage === 'string' && entry.sourceLanguage.trim() ? entry.sourceLanguage.trim().toUpperCase() : '',
+    targetLanguage: typeof entry.targetLanguage === 'string' && entry.targetLanguage.trim() ? entry.targetLanguage.trim().toUpperCase() : '',
+    translationProvider: typeof entry.translationProvider === 'string' && entry.translationProvider.trim() ? entry.translationProvider.trim() : '',
+    originHistoryId: typeof entry.originHistoryId === 'string' && entry.originHistoryId.trim() ? entry.originHistoryId.trim() : '',
     createdAt,
     updatedAt,
     charCount: text.length,
@@ -1174,7 +1627,14 @@ function upsertTextHistoryEntry(entry) {
     throw new Error('История текста: не удалось сохранить пустую запись.');
   }
 
-  const nextHistory = history.filter((item) => item.id !== normalizedEntry.id && item.text !== normalizedEntry.text);
+  const nextHistory = history.filter((item) => {
+    if (item.id === normalizedEntry.id) return false;
+    const isSameContent = item.text === normalizedEntry.text
+      && item.source === normalizedEntry.source
+      && item.sourceLanguage === normalizedEntry.sourceLanguage
+      && item.targetLanguage === normalizedEntry.targetLanguage;
+    return !isSameContent;
+  });
   nextHistory.unshift(normalizedEntry);
   writeTextHistory(nextHistory);
 
@@ -1253,6 +1713,22 @@ app.whenReady().then(() => {
       return { ok: true, history: [] };
     } catch (error) {
       return { ok: false, error: error.message, history: [] };
+    }
+  });
+
+  ipcMain.handle('get-translation-state', async () => {
+    try {
+      return { ok: true, state: getPublicTranslationState() };
+    } catch (error) {
+      return { ok: false, error: error.message, state: getPublicTranslationState() };
+    }
+  });
+
+  ipcMain.handle('translate-text', async (_event, request) => {
+    try {
+      return { ok: true, ...await translateText(request) };
+    } catch (error) {
+      return { ok: false, error: error.message };
     }
   });
 
