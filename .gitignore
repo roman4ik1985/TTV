@@ -7,3 +7,5 @@ venv/
 temp_*.txt
 temp_*.json
 temp_*.mp3
+user_dict.json
+text_history.json

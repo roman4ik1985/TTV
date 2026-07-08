@@ -12,6 +12,8 @@ const ttsScriptPath = path.join(projectDir, 'tts_server.py');
 const tempTextPath = path.join(projectDir, 'temp_text.txt');
 const tempTimingPath = path.join(projectDir, 'temp_timing.json');
 const userDictPath = path.join(projectDir, 'user_dict.json');
+const textHistoryPath = path.join(projectDir, 'text_history.json');
+const MAX_HISTORY_ENTRIES = 25;
 
 let mainWindow;
 let liveSttProcess = null;
@@ -91,6 +93,79 @@ function readUserDictionary() {
   return JSON.parse(raw);
 }
 
+function countWords(text) {
+  return (text || '').trim().split(/\s+/).filter((word) => word.length > 0).length;
+}
+
+function normalizeHistoryEntry(entry) {
+  if (!entry || typeof entry.text !== 'string') return null;
+
+  const text = entry.text.trim();
+  if (!text) return null;
+
+  const source = typeof entry.source === 'string' && entry.source.trim() ? entry.source.trim() : 'Текст';
+  const label = typeof entry.label === 'string' && entry.label.trim() ? entry.label.trim() : source;
+  const createdAt = typeof entry.createdAt === 'string' && entry.createdAt.trim() ? entry.createdAt : new Date().toISOString();
+  const updatedAt = typeof entry.updatedAt === 'string' && entry.updatedAt.trim() ? entry.updatedAt : createdAt;
+
+  return {
+    id: typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    text,
+    source,
+    label,
+    createdAt,
+    updatedAt,
+    charCount: text.length,
+    wordCount: countWords(text)
+  };
+}
+
+function readTextHistory() {
+  if (!fs.existsSync(textHistoryPath)) return [];
+
+  const raw = fs.readFileSync(textHistoryPath, 'utf-8');
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .map(normalizeHistoryEntry)
+    .filter(Boolean)
+    .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))
+    .slice(0, MAX_HISTORY_ENTRIES);
+}
+
+function writeTextHistory(entries) {
+  const normalizedEntries = Array.isArray(entries) ? entries.map(normalizeHistoryEntry).filter(Boolean) : [];
+  fs.writeFileSync(
+    textHistoryPath,
+    JSON.stringify(normalizedEntries.slice(0, MAX_HISTORY_ENTRIES), null, 2),
+    'utf-8'
+  );
+}
+
+function upsertTextHistoryEntry(entry) {
+  const history = readTextHistory();
+  const existingEntry = history.find((item) => item.id === entry?.id) || null;
+  const normalizedEntry = normalizeHistoryEntry({
+    ...entry,
+    createdAt: existingEntry?.createdAt || entry?.createdAt,
+    updatedAt: new Date().toISOString()
+  });
+
+  if (!normalizedEntry) {
+    throw new Error('История текста: не удалось сохранить пустую запись.');
+  }
+
+  const nextHistory = history.filter((item) => item.id !== normalizedEntry.id && item.text !== normalizedEntry.text);
+  nextHistory.unshift(normalizedEntry);
+  writeTextHistory(nextHistory);
+
+  return {
+    savedEntry: normalizedEntry,
+    history: readTextHistory()
+  };
+}
+
 app.whenReady().then(() => {
   createWindow();
 
@@ -124,6 +199,42 @@ app.whenReady().then(() => {
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('read-text-history', async () => {
+    try {
+      return { ok: true, history: readTextHistory() };
+    } catch (error) {
+      return { ok: false, error: error.message, history: [] };
+    }
+  });
+
+  ipcMain.handle('upsert-text-history', async (_event, entry) => {
+    try {
+      const result = upsertTextHistoryEntry(entry);
+      return { ok: true, history: result.history, savedEntry: result.savedEntry };
+    } catch (error) {
+      return { ok: false, error: error.message, history: [] };
+    }
+  });
+
+  ipcMain.handle('delete-text-history-entry', async (_event, entryId) => {
+    try {
+      const nextHistory = readTextHistory().filter((item) => item.id !== entryId);
+      writeTextHistory(nextHistory);
+      return { ok: true, history: readTextHistory() };
+    } catch (error) {
+      return { ok: false, error: error.message, history: [] };
+    }
+  });
+
+  ipcMain.handle('clear-text-history', async () => {
+    try {
+      writeTextHistory([]);
+      return { ok: true, history: [] };
+    } catch (error) {
+      return { ok: false, error: error.message, history: [] };
     }
   });
 

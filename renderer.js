@@ -31,8 +31,14 @@ window.addEventListener('DOMContentLoaded', () => {
   const modeRead = document.getElementById('mode-read');
   const modeListen = document.getElementById('mode-listen');
   const avatarCards = document.querySelectorAll('.avatar-card');
+  const historyList = document.getElementById('history-list');
+  const historyMeta = document.getElementById('history-meta');
+  const btnHistoryClear = document.getElementById('btn-history-clear');
 
   let fullText = '';
+  let textHistory = [];
+  let activeHistoryId = null;
+  let currentTextSource = 'Текст';
   let currentMode = 'read';
   let selectedGender = 'male';
   let isEditing = false;
@@ -88,6 +94,221 @@ window.addEventListener('DOMContentLoaded', () => {
 
   function setStatus(message) {
     if (lblStatus) lblStatus.textContent = message;
+  }
+
+  function getNormalizedText(text) {
+    return typeof text === 'string' ? text.replace(/\r\n/g, '\n').trim() : '';
+  }
+
+  function isTypingTarget(target) {
+    if (!target) return false;
+    return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+  }
+
+  function formatHistoryTimestamp(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(date);
+  }
+
+  function renderEmptyWorkspace() {
+    renderTextMessage('Приложение готово. Вставьте текст, начните диктовку или импортируйте файл.', {
+      color: '#a4b0be',
+      display: 'block',
+      textAlign: 'center',
+      marginTop: '40px',
+      lineHeight: '1.6'
+    });
+  }
+
+  function renderListenModeState() {
+    if (!textContainer) return;
+    textContainer.classList.add('listen-mode');
+    renderTextMessage(
+      fullText
+        ? 'Текст готов к прослушиванию. Нажмите воспроизведение.'
+        : 'Режим прослушивания активен.',
+      {
+        color: fullText ? '#ffffff' : '#95a5a6',
+        fontWeight: 'bold',
+        display: 'block',
+        textAlign: 'center',
+        marginTop: '40px'
+      }
+    );
+  }
+
+  function renderCurrentText() {
+    if (!textContainer) return;
+
+    if (!fullText) {
+      textContainer.classList.remove('listen-mode');
+      if (currentMode === 'listen') {
+        renderListenModeState();
+      } else {
+        renderEmptyWorkspace();
+      }
+      return;
+    }
+
+    if (currentMode === 'read') {
+      textContainer.classList.remove('listen-mode');
+      prepareSentenceUI(fullText);
+      return;
+    }
+
+    renderListenModeState();
+  }
+
+  function setTextHistory(history, nextActiveHistoryId = activeHistoryId) {
+    textHistory = Array.isArray(history) ? history : [];
+    activeHistoryId = nextActiveHistoryId && textHistory.some((entry) => entry.id === nextActiveHistoryId)
+      ? nextActiveHistoryId
+      : null;
+    renderHistoryList();
+  }
+
+  function renderHistoryList() {
+    if (!historyList) return;
+
+    historyList.replaceChildren();
+
+    if (historyMeta) {
+      historyMeta.textContent = textHistory.length ? `${textHistory.length} записей` : 'История пуста';
+    }
+
+    if (btnHistoryClear) {
+      btnHistoryClear.disabled = textHistory.length === 0;
+    }
+
+    if (textHistory.length === 0) {
+      const emptyNode = document.createElement('div');
+      emptyNode.className = 'history-empty';
+      emptyNode.textContent = 'История появится после импорта, диктовки, вставки из буфера или ручного редактирования.';
+      historyList.appendChild(emptyNode);
+      return;
+    }
+
+    textHistory.forEach((entry) => {
+      const row = document.createElement('div');
+      row.className = 'history-row';
+
+      const itemButton = document.createElement('button');
+      itemButton.type = 'button';
+      itemButton.className = 'history-item';
+      if (entry.id === activeHistoryId) itemButton.classList.add('active');
+
+      const sourceNode = document.createElement('div');
+      sourceNode.className = 'history-source';
+      sourceNode.textContent = entry.source || 'Текст';
+
+      const previewNode = document.createElement('div');
+      previewNode.className = 'history-preview';
+      previewNode.textContent = entry.text || '';
+
+      const statsNode = document.createElement('div');
+      statsNode.className = 'history-stats';
+      statsNode.textContent = `${entry.charCount || 0} симв. · ${entry.wordCount || 0} слов · ${formatHistoryTimestamp(entry.updatedAt)}`;
+
+      itemButton.append(sourceNode, previewNode, statsNode);
+      itemButton.addEventListener('click', () => {
+        void applyTextFromSource(entry.text, {
+          sourceLabel: entry.source || 'История',
+          statusMessage: `Загружен текст из истории: ${entry.charCount || entry.text.length} символов`,
+          saveToHistory: false,
+          historyId: entry.id
+        });
+      });
+
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'history-delete';
+      deleteButton.textContent = '✕';
+      deleteButton.title = 'Удалить запись';
+      deleteButton.addEventListener('click', async () => {
+        const deleteResult = await smartReader.deleteTextHistoryEntry(entry.id);
+        if (!deleteResult.ok) {
+          alert(`Не удалось удалить запись: ${deleteResult.error}`);
+          return;
+        }
+
+        const nextActiveHistoryId = activeHistoryId === entry.id ? null : activeHistoryId;
+        setTextHistory(deleteResult.history, nextActiveHistoryId);
+      });
+
+      row.append(itemButton, deleteButton);
+      historyList.appendChild(row);
+    });
+  }
+
+  async function persistTextInHistory(text, sourceLabel, reuseActiveHistory = false) {
+    if (!smartReader.upsertTextHistory) return false;
+
+    const normalizedText = getNormalizedText(text);
+    if (!normalizedText) return false;
+
+    const historyResult = await smartReader.upsertTextHistory({
+      id: reuseActiveHistory ? activeHistoryId : undefined,
+      text: normalizedText,
+      source: sourceLabel,
+      label: sourceLabel
+    });
+
+    if (!historyResult.ok) {
+      console.error(historyResult.error);
+      return false;
+    }
+
+    activeHistoryId = historyResult.savedEntry?.id || activeHistoryId;
+    setTextHistory(historyResult.history, activeHistoryId);
+    return true;
+  }
+
+  async function applyTextFromSource(text, options = {}) {
+    const {
+      sourceLabel = 'Текст',
+      statusMessage,
+      saveToHistory = true,
+      reuseActiveHistory = false,
+      historyId = null,
+      autoSpeak = false
+    } = options;
+
+    currentTextSource = sourceLabel;
+    fullText = getNormalizedText(text);
+
+    if (historyId) {
+      activeHistoryId = historyId;
+      setTextHistory(textHistory, activeHistoryId);
+    } else if (saveToHistory && !reuseActiveHistory) {
+      activeHistoryId = null;
+    }
+
+    updateCounters(fullText);
+    renderCurrentText();
+
+    if (statusMessage) {
+      setStatus(statusMessage);
+    } else if (fullText) {
+      setStatus(`${sourceLabel}: ${fullText.length} символов`);
+    } else {
+      setStatus(`${sourceLabel}: текст отсутствует`);
+    }
+
+    if (saveToHistory && fullText) {
+      await persistTextInHistory(fullText, sourceLabel, reuseActiveHistory);
+    }
+
+    if (autoSpeak && fullText) {
+      void startSpeaking(fullText);
+    }
+
+    return Boolean(fullText);
   }
 
   function renderImportState(message, color = '#2f54eb') {
@@ -313,27 +534,11 @@ window.addEventListener('DOMContentLoaded', () => {
       return normalizeSubtitleText(cleanText);
     }
 
-    return cleanText.trim();
+    return getNormalizedText(cleanText);
   }
 
-  function applyImportedText(text, sourceLabel = 'Текст') {
-    fullText = text;
-    updateCounters(fullText);
-
-    if (fullText) {
-      if (currentMode === 'read') {
-        prepareSentenceUI(fullText);
-      } else {
-        renderTextMessage('Текст загружен. Переключитесь в режим чтения или нажмите воспроизведение.', {
-          color: '#2f54eb',
-          fontWeight: 'bold',
-          display: 'block',
-          textAlign: 'center',
-          marginTop: '40px'
-        });
-      }
-      setStatus(`${sourceLabel} импортирован: ${fullText.length} символов`);
-    } else {
+  async function applyImportedText(text, sourceLabel = 'Текст') {
+    if (!text) {
       renderTextMessage('Текст загружен, но после очистки субтитров содержимое оказалось пустым.', {
         color: '#747d8c',
         display: 'block',
@@ -341,10 +546,17 @@ window.addEventListener('DOMContentLoaded', () => {
         marginTop: '40px'
       });
       setStatus('Импорт завершился без текста');
+      return false;
     }
+
+    await applyTextFromSource(text, {
+      sourceLabel,
+      statusMessage: `${sourceLabel} импортирован: ${text.length} символов`
+    });
+    return true;
   }
 
-  function completeImportedText(rawText, kind, importConfig) {
+  async function completeImportedText(rawText, kind, importConfig) {
     const preparedText = prepareImportedText(rawText, kind);
 
     if (!preparedText) {
@@ -356,8 +568,7 @@ window.addEventListener('DOMContentLoaded', () => {
       return false;
     }
 
-    applyImportedText(preparedText, importConfig.label);
-    return true;
+    return applyImportedText(preparedText, importConfig.label);
   }
 
   function showProcessingError(message, fallbackText = 'Произошла ошибка модуля обработки.', options = {}) {
@@ -409,6 +620,70 @@ window.addEventListener('DOMContentLoaded', () => {
       span.style.color = '';
     });
     lastActiveIndex = -1;
+  }
+
+  function stopPlayback(resetPosition = false) {
+    audioPlayer.pause();
+    if (resetPosition) audioPlayer.currentTime = 0;
+    clearAllHighlightsDirectly();
+  }
+
+  function enterEditMode() {
+    if (!textContainer || !btnEditToggle) return;
+
+    isEditing = true;
+    stopPlayback(false);
+    textContainer.classList.remove('listen-mode');
+    textContainer.contentEditable = 'true';
+    clearTextContainer();
+    textContainer.textContent = fullText;
+    textContainer.style.whiteSpace = 'pre-wrap';
+    textContainer.focus();
+    btnEditToggle.textContent = '✔️ Готово';
+    btnEditToggle.style.backgroundColor = '#2ed573';
+    btnEditToggle.style.color = '#ffffff';
+    setStatus('Режим редактирования...');
+  }
+
+  async function exitEditMode(options = {}) {
+    const { saveToHistory = true } = options;
+    if (!textContainer || !btnEditToggle) return '';
+
+    isEditing = false;
+    textContainer.contentEditable = 'false';
+    resetTextContainerWhiteSpace();
+    btnEditToggle.textContent = '✍️ Редактировать';
+    btnEditToggle.style.backgroundColor = '#ffeaa7';
+    btnEditToggle.style.color = '#d35400';
+
+    const editedText = getNormalizedText(textContainer.innerText);
+    fullText = editedText;
+    updateCounters(fullText);
+    renderCurrentText();
+
+    if (fullText) {
+      setStatus('Режим просмотра');
+      if (saveToHistory) {
+        await persistTextInHistory(fullText, currentTextSource || 'Редактирование', true);
+      } else {
+        setTextHistory(textHistory, activeHistoryId);
+      }
+    } else {
+      activeHistoryId = null;
+      setTextHistory(textHistory, activeHistoryId);
+      setStatus('Текст очищен');
+    }
+
+    return fullText;
+  }
+
+  function toggleEditMode() {
+    if (isEditing) {
+      void exitEditMode();
+      return;
+    }
+
+    enterEditMode();
   }
 
   function prepareSentenceUI(text) {
@@ -535,7 +810,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   async function startSpeaking(text) {
-    if (isEditing && btnEditToggle) btnEditToggle.click();
+    if (isEditing) await exitEditMode();
 
     audioPlayer.pause();
     clearAllHighlightsDirectly();
@@ -558,6 +833,48 @@ window.addEventListener('DOMContentLoaded', () => {
 
     const message = result.error || result.stdout || result.stderr || `Процесс завершился с кодом ${result.code}.`;
     showProcessingError(message, 'Не удалось выполнить озвучку текста.');
+  }
+
+  async function exportCurrentText() {
+    if (isEditing) await exitEditMode();
+
+    if (!fullText || fullText.trim() === '') {
+      alert('Нет текста для экспорта!');
+      return;
+    }
+
+    const result = await smartReader.showSaveDialog();
+    if (result.canceled || !result.filePath) return;
+
+    const exportResult = await smartReader.exportText(result.filePath, fullText);
+    if (exportResult.ok) {
+      alert('Файл сохранен!');
+    } else {
+      alert(`Ошибка сохранения: ${exportResult.error}`);
+    }
+  }
+
+  async function loadTextHistory() {
+    if (!smartReader.readTextHistory) return;
+
+    const historyResult = await smartReader.readTextHistory();
+    if (!historyResult.ok) {
+      console.error(historyResult.error);
+      return;
+    }
+
+    setTextHistory(historyResult.history, activeHistoryId);
+  }
+
+  async function clearTextHistory() {
+    const historyResult = await smartReader.clearTextHistory();
+    if (!historyResult.ok) {
+      alert(`Не удалось очистить историю: ${historyResult.error}`);
+      return;
+    }
+
+    activeHistoryId = null;
+    setTextHistory(historyResult.history, activeHistoryId);
   }
 
   if (btnFontToggle) {
@@ -601,7 +918,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   if (btnTranscriptPaste && transcriptPasteInput) {
-    btnTranscriptPaste.addEventListener('click', () => {
+    btnTranscriptPaste.addEventListener('click', async () => {
       const rawText = transcriptPasteInput.value.trim();
       if (!rawText) {
         alert('Пожалуйста, вставьте текст расшифровки или субтитров.');
@@ -610,7 +927,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
       if (uploadModal) uploadModal.classList.remove('active');
       const importConfig = getImportConfig('manual');
-      if (completeImportedText(rawText, 'pasted', importConfig)) clearImportInputs();
+      if (await completeImportedText(rawText, 'pasted', importConfig)) clearImportInputs();
     });
   }
 
@@ -646,33 +963,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   if (btnEditToggle) {
-    btnEditToggle.addEventListener('click', () => {
-      if (!isEditing) {
-        isEditing = true;
-        audioPlayer.pause();
-        clearAllHighlightsDirectly();
-        textContainer.contentEditable = 'true';
-        textContainer.focus();
-        clearTextContainer();
-        textContainer.textContent = fullText;
-        textContainer.style.whiteSpace = 'pre-wrap';
-        btnEditToggle.textContent = '✔️ Готово';
-        btnEditToggle.style.backgroundColor = '#2ed573';
-        btnEditToggle.style.color = '#ffffff';
-        lblStatus.textContent = 'Режим редактирования...';
-      } else {
-        isEditing = false;
-        textContainer.contentEditable = 'false';
-        resetTextContainerWhiteSpace();
-        fullText = textContainer.innerText.trim();
-        updateCounters(fullText);
-        if (currentMode === 'read' && fullText) prepareSentenceUI(fullText);
-        btnEditToggle.textContent = '✍️ Редактировать';
-        btnEditToggle.style.backgroundColor = '#ffeaa7';
-        btnEditToggle.style.color = '#d35400';
-        lblStatus.textContent = 'Режим просмотра';
-      }
-    });
+    btnEditToggle.addEventListener('click', () => toggleEditMode());
   }
 
   btnBold.addEventListener('click', () => {
@@ -724,16 +1015,20 @@ window.addEventListener('DOMContentLoaded', () => {
       currentMode = 'read';
       modeRead.classList.add('active');
       modeListen.classList.remove('active');
-      textContainer.classList.remove('listen-mode');
-      if (fullText) prepareSentenceUI(fullText);
+      renderCurrentText();
     });
 
     modeListen.addEventListener('click', () => {
       currentMode = 'listen';
       modeListen.classList.add('active');
       modeRead.classList.remove('active');
-      textContainer.classList.add('listen-mode');
-      renderTextMessage('🎧 Режим прослушивания активен...');
+      renderCurrentText();
+    });
+  }
+
+  if (btnHistoryClear) {
+    btnHistoryClear.addEventListener('click', () => {
+      void clearTextHistory();
     });
   }
 
@@ -748,10 +1043,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
   const removeClipboardListener = smartReader.onClipboardText((text) => {
     if (!text || text.trim() === '') return;
-    fullText = text;
-    updateCounters(fullText);
-    if (currentMode === 'read') prepareSentenceUI(text);
-    void startSpeaking(text);
+    void applyTextFromSource(text, {
+      sourceLabel: 'Буфер обмена',
+      statusMessage: `Буфер обмена: ${text.trim().length} символов`,
+      autoSpeak: true
+    });
   });
 
   const removeLiveSttListener = smartReader.onLiveSttEvent((event) => {
@@ -780,9 +1076,10 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     if (event.type === 'finished') {
-      fullText = accumulatedSttText.trim();
-      updateCounters(fullText);
-      if (fullText && currentMode === 'read') prepareSentenceUI(fullText);
+      void applyTextFromSource(accumulatedSttText, {
+        sourceLabel: 'Диктовка',
+        statusMessage: `Диктовка завершена: ${accumulatedSttText.trim().length} символов`
+      });
       return;
     }
 
@@ -807,9 +1104,79 @@ window.addEventListener('DOMContentLoaded', () => {
     removeLiveSttListener();
   });
 
+  window.addEventListener('keydown', (event) => {
+    const key = event.key.toLowerCase();
+    const hasPrimaryModifier = event.ctrlKey || event.metaKey;
+    const typingTarget = isTypingTarget(event.target);
+
+    if (event.key === 'Escape') {
+      if (uploadModal && uploadModal.classList.contains('active')) {
+        event.preventDefault();
+        uploadModal.classList.remove('active');
+        clearImportInputs();
+        return;
+      }
+
+      if (isEditing) {
+        event.preventDefault();
+        void exitEditMode();
+        return;
+      }
+
+      if (!audioPlayer.paused || audioPlayer.currentTime > 0) {
+        event.preventDefault();
+        stopPlayback(true);
+      }
+      return;
+    }
+
+    if (hasPrimaryModifier && key === 's') {
+      event.preventDefault();
+      void exportCurrentText();
+      return;
+    }
+
+    if (typingTarget) return;
+
+    if (hasPrimaryModifier && key === 'i') {
+      event.preventDefault();
+      if (uploadModal) uploadModal.classList.add('active');
+      return;
+    }
+
+    if (hasPrimaryModifier && key === 'e') {
+      event.preventDefault();
+      toggleEditMode();
+      return;
+    }
+
+    if (hasPrimaryModifier && key === '1' && modeRead) {
+      event.preventDefault();
+      modeRead.click();
+      return;
+    }
+
+    if (hasPrimaryModifier && key === '2' && modeListen) {
+      event.preventDefault();
+      modeListen.click();
+      return;
+    }
+
+    if (!event.altKey && !hasPrimaryModifier && key === ' ') {
+      event.preventDefault();
+      if (audioPlayer.src && !audioPlayer.paused) {
+        audioPlayer.pause();
+      } else if (audioPlayer.src && audioPlayer.paused) {
+        audioPlayer.play().catch((error) => console.error(error));
+      } else if (fullText) {
+        void startSpeaking(fullText);
+      }
+    }
+  });
+
   if (btnStt) {
     btnStt.addEventListener('click', async () => {
-      if (isEditing && btnEditToggle) btnEditToggle.click();
+      if (isEditing) await exitEditMode();
 
       if (!isSttRecording) {
         isSttRecording = true;
@@ -844,21 +1211,8 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   if (btnExport) {
-    btnExport.addEventListener('click', async () => {
-      if (!fullText || fullText.trim() === '') {
-        alert('Нет текста для экспорта!');
-        return;
-      }
-
-      const result = await smartReader.showSaveDialog();
-      if (!result.canceled && result.filePath) {
-        const exportResult = await smartReader.exportText(result.filePath, fullText);
-        if (exportResult.ok) {
-          alert('Файл сохранен!');
-        } else {
-          alert(`Ошибка сохранения: ${exportResult.error}`);
-        }
-      }
+    btnExport.addEventListener('click', () => {
+      void exportCurrentText();
     });
   }
 
@@ -919,9 +1273,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   if (btnStop) {
     btnStop.addEventListener('click', () => {
-      audioPlayer.pause();
-      audioPlayer.currentTime = 0;
-      clearAllHighlightsDirectly();
+      stopPlayback(true);
     });
   }
 
@@ -936,4 +1288,7 @@ window.addEventListener('DOMContentLoaded', () => {
       audioPlayer.volume = parseFloat(volumeSlider.value);
     });
   }
+
+  renderCurrentText();
+  void loadTextHistory();
 });
