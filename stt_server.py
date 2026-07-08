@@ -11,7 +11,9 @@ class YouTubeSubtitleBlockedError(Exception):
     pass
 
 class YouTubeBrowserCookieError(Exception):
-    pass
+    def __init__(self, message, category="browser_cookie_unknown"):
+        super().__init__(message)
+        self.category = category
 
 class PDFImportError(ValueError):
     pass
@@ -130,23 +132,104 @@ def get_preferred_youtube_subtitle_language(video_url):
 
     return None, available_languages
 
-def normalize_browser_cookie_error(browser_name, message):
-    browser_title = "Chrome" if browser_name == "chrome" else "Edge"
-    lowered_message = (message or "").lower()
-
-    if "could not copy chrome cookie database" in lowered_message:
-        return f"Не удалось использовать cookies из {browser_title}: файл Cookies заблокирован открытым браузером. Закройте {browser_title} и повторите импорт."
-
-    if "failed to decrypt with dpapi" in lowered_message:
-        return f"Не удалось расшифровать cookies из {browser_title}: браузер использует защищённое хранилище Windows."
-
-    if "http error 429" in lowered_message:
-        return f"YouTube отклонил загрузку субтитров даже с cookies из {browser_title} (HTTP 429)."
-
-    return f"Импорт YouTube через {browser_title} завершился ошибкой: {message}"
+def get_browser_display_name(browser_name):
+    return "Chrome" if browser_name == "chrome" else "Edge"
 
 def get_youtube_retry_guidance():
     return "Подождите 5-10 минут и повторите импорт или попробуйте другую сеть/VPN."
+
+def get_youtube_manual_fallback_guidance():
+    return "Если YouTube продолжит блокировать доступ, импортируйте .vtt/.srt/.txt или вставьте текст субтитров вручную в окне импорта."
+
+def get_exported_cookie_guidance():
+    return (
+        "Если browser cookies не читаются, экспортируйте cookies YouTube в Netscape cookies.txt "
+        "и сохраните файл рядом с приложением как youtube_cookies.txt или укажите путь через "
+        "переменную среды TTV_YOUTUBE_COOKIES_FILE."
+    )
+
+def classify_browser_cookie_error(browser_name, message):
+    browser_title = get_browser_display_name(browser_name)
+    lowered_message = (message or "").lower()
+
+    if "could not copy chrome cookie database" in lowered_message:
+        return (
+            "browser_cookie_locked",
+            f"Не удалось использовать cookies из {browser_title}: файл Cookies заблокирован открытым браузером. "
+            f"Закройте {browser_title} и повторите импорт."
+        )
+
+    if "failed to decrypt with dpapi" in lowered_message:
+        return (
+            "browser_cookie_decrypt_failed",
+            f"Не удалось расшифровать cookies из {browser_title}: браузер использует защищённое хранилище Windows. "
+            f"{get_exported_cookie_guidance()}"
+        )
+
+    if "http error 429" in lowered_message:
+        return (
+            "browser_cookie_http_429",
+            f"YouTube отклонил загрузку субтитров даже с cookies из {browser_title} (HTTP 429). {get_youtube_retry_guidance()}"
+        )
+
+    return (
+        "browser_cookie_unknown",
+        f"Импорт YouTube через {browser_title} завершился ошибкой: {message}"
+    )
+
+def classify_cookie_file_error(cookie_file_path, message):
+    lowered_message = (message or "").lower()
+    cookie_name = os.path.basename(cookie_file_path)
+
+    if "http error 429" in lowered_message:
+        return (
+            "exported_cookie_http_429",
+            f"YouTube отклонил загрузку субтитров даже через {cookie_name} (HTTP 429). {get_youtube_retry_guidance()}"
+        )
+
+    if "does not look like a netscape format cookies file" in lowered_message:
+        return (
+            "exported_cookie_invalid_format",
+            f"Файл {cookie_name} не похож на Netscape cookies.txt. Экспортируйте cookies заново в совместимом формате."
+        )
+
+    return (
+        "exported_cookie_unknown",
+        f"Импорт YouTube через {cookie_name} завершился ошибкой: {message}"
+    )
+
+def get_exported_cookie_file_candidates():
+    candidates = []
+    env_path = (os.environ.get("TTV_YOUTUBE_COOKIES_FILE") or "").strip()
+
+    if env_path:
+        candidates.append(env_path)
+
+    project_dir = os.getcwd()
+    for file_name in ("youtube_cookies.txt", "youtube.cookies.txt", "cookies.txt"):
+        candidates.append(os.path.join(project_dir, file_name))
+
+    unique_candidates = []
+    for candidate in candidates:
+        normalized = os.path.abspath(candidate)
+        if normalized not in unique_candidates:
+            unique_candidates.append(normalized)
+
+    return [candidate for candidate in unique_candidates if os.path.isfile(candidate)]
+
+def build_youtube_blocked_message(cookie_attempt_errors, transcript_error_message):
+    details = []
+    details.extend(cookie_attempt_errors)
+
+    if transcript_error_message:
+        details.append(transcript_error_message)
+
+    message = "Автоимпорт субтитров из YouTube сейчас недоступен."
+    if details:
+        message += " " + " ".join(details)
+
+    message += f" {get_youtube_manual_fallback_guidance()}"
+    return message.strip()
 
 def parse_vtt_text(vtt_text):
     cleaned_lines = []
@@ -196,7 +279,8 @@ def fetch_youtube_text_with_browser_cookies(video_url, browser_name, subtitle_la
             with YoutubeDL(options) as ydl:
                 ydl.download([video_url])
         except DownloadError as exc:
-            raise YouTubeBrowserCookieError(normalize_browser_cookie_error(browser_name, str(exc))) from exc
+            category, message = classify_browser_cookie_error(browser_name, str(exc))
+            raise YouTubeBrowserCookieError(message, category=category) from exc
 
         subtitle_paths = sorted(glob.glob(os.path.join(temp_dir, f"*.{subtitle_language_code}.vtt")))
         if not subtitle_paths:
@@ -204,7 +288,9 @@ def fetch_youtube_text_with_browser_cookies(video_url, browser_name, subtitle_la
 
         if not subtitle_paths:
             raise YouTubeBrowserCookieError(
-                f"Импорт YouTube через {browser_name} не сохранил файл субтитров."
+                f"Импорт YouTube через {get_browser_display_name(browser_name)} не сохранил файл субтитров. "
+                "Проверьте, что у видео есть ru/en субтитры, или используйте ручной импорт .vtt/.srt/.txt.",
+                category="browser_cookie_subtitle_file_missing"
             )
 
         with open(subtitle_paths[0], "r", encoding="utf-8") as subtitle_file:
@@ -212,13 +298,64 @@ def fetch_youtube_text_with_browser_cookies(video_url, browser_name, subtitle_la
 
         if not subtitle_text:
             raise YouTubeBrowserCookieError(
-                f"Импорт YouTube через {browser_name} вернул пустые субтитры."
+                f"Импорт YouTube через {get_browser_display_name(browser_name)} вернул пустые субтитры. "
+                "Попробуйте экспортированный cookies.txt или ручной импорт субтитров.",
+                category="browser_cookie_empty_subtitles"
+            )
+
+        return subtitle_text
+
+def fetch_youtube_text_with_cookie_file(video_url, cookie_file_path, subtitle_language_code):
+    from yt_dlp import YoutubeDL
+    from yt_dlp.utils import DownloadError
+
+    with tempfile.TemporaryDirectory(prefix="smartreader-ytdlp-") as temp_dir:
+        output_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
+        options = {
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": [subtitle_language_code],
+            "subtitlesformat": "vtt",
+            "outtmpl": output_template,
+            "cookiefile": cookie_file_path,
+            "logger": SilentYtdlpLogger(),
+        }
+
+        try:
+            with YoutubeDL(options) as ydl:
+                ydl.download([video_url])
+        except DownloadError as exc:
+            category, message = classify_cookie_file_error(cookie_file_path, str(exc))
+            raise YouTubeBrowserCookieError(message, category=category) from exc
+
+        subtitle_paths = sorted(glob.glob(os.path.join(temp_dir, f"*.{subtitle_language_code}.vtt")))
+        if not subtitle_paths:
+            subtitle_paths = sorted(glob.glob(os.path.join(temp_dir, "*.vtt")))
+
+        if not subtitle_paths:
+            raise YouTubeBrowserCookieError(
+                f"Импорт YouTube через {os.path.basename(cookie_file_path)} не сохранил файл субтитров. "
+                "Проверьте, что у видео есть ru/en субтитры, или используйте ручной импорт .vtt/.srt/.txt.",
+                category="exported_cookie_subtitle_file_missing"
+            )
+
+        with open(subtitle_paths[0], "r", encoding="utf-8") as subtitle_file:
+            subtitle_text = parse_vtt_text(subtitle_file.read())
+
+        if not subtitle_text:
+            raise YouTubeBrowserCookieError(
+                f"Импорт YouTube через {os.path.basename(cookie_file_path)} вернул пустые субтитры. "
+                "Попробуйте заново экспортировать cookies или используйте ручной импорт субтитров.",
+                category="exported_cookie_empty_subtitles"
             )
 
         return subtitle_text
 
 def extract_youtube_text(video_url, video_id):
-    browser_cookie_errors = []
+    cookie_attempt_errors = []
     available_languages = []
 
     try:
@@ -233,8 +370,15 @@ def extract_youtube_text(video_url, video_id):
             try:
                 return fetch_youtube_text_with_browser_cookies(video_url, browser_name, preferred_language_code)
             except YouTubeBrowserCookieError as exc:
-                if str(exc) not in browser_cookie_errors:
-                    browser_cookie_errors.append(str(exc))
+                if str(exc) not in cookie_attempt_errors:
+                    cookie_attempt_errors.append(str(exc))
+
+        for cookie_file_path in get_exported_cookie_file_candidates():
+            try:
+                return fetch_youtube_text_with_cookie_file(video_url, cookie_file_path, preferred_language_code)
+            except YouTubeBrowserCookieError as exc:
+                if str(exc) not in cookie_attempt_errors:
+                    cookie_attempt_errors.append(str(exc))
 
     elif available_languages:
         formatted_languages = ", ".join(available_languages)
@@ -247,12 +391,9 @@ def extract_youtube_text(video_url, video_id):
     except YouTubeSubtitleUnavailableError:
         raise
     except YouTubeSubtitleBlockedError as exc:
-        if browser_cookie_errors:
-            details = " ".join(browser_cookie_errors)
-            raise YouTubeSubtitleBlockedError(
-                f"Не удалось получить субтитры YouTube через browser cookies. {details} {str(exc)}"
-            ) from exc
-        raise
+        raise YouTubeSubtitleBlockedError(
+            build_youtube_blocked_message(cookie_attempt_errors, str(exc))
+        ) from exc
 
 def choose_youtube_transcript(transcript_list):
     from youtube_transcript_api._errors import NoTranscriptFound

@@ -11,7 +11,8 @@
     "check:python": "python -m py_compile stt_server.py tts_server.py",
     "check:python-imports": "python -c \"import stt_server, tts_server; print('python imports ok')\"",
     "check:pdf-import": "python scripts/pdf_import_smoke.py",
-    "ci": "npm run check:js && npm run check:python && npm run check:python-imports && npm run check:pdf-import"
+    "check:youtube-import": "python scripts/youtube_import_smoke.py",
+    "ci": "npm run check:js && npm run check:python && npm run check:python-imports && npm run check:pdf-import && npm run check:youtube-import"
   },
   "devDependencies": {
     "electron": "^43.0.0",

@@ -9,3 +9,4 @@
 ## Active Notes
 - [[synthesis/IMPORT_UX_REGRESSION_CHECKLIST]]
 - [[synthesis/PDF_IMPORT_EDGE_CASES]]
+- [[synthesis/YOUTUBE_IMPORT_HARDENING]]

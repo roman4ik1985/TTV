@@ -63,5 +63,6 @@ Prerequisites:
 - Temporary runtime files are written next to the project in `temp_text.txt`, `temp_timing.json`, and `temp_voice.mp3`.
 - YouTube import now prefers `yt-dlp` with browser cookies from local Chromium browsers and falls back to `youtube-transcript-api` when browser-backed extraction is unavailable.
 - If Chrome is open, Windows may lock the Chrome `Cookies` database. In that case, close Chrome and retry the YouTube import.
+- If Chromium cookies cannot be decrypted on Windows, export YouTube cookies in Netscape `cookies.txt` format and place the file next to the app as `youtube_cookies.txt`, or point `TTV_YOUTUBE_COOKIES_FILE` to it.
 - If YouTube keeps blocking subtitle retrieval, use the upload modal to import a saved `.vtt` / `.srt` / `.txt` transcript or paste the transcript text directly.
 - The current CI baseline validates dependency install, JavaScript syntax, and Python syntax/import smoke checks on GitHub Actions.
