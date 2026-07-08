@@ -385,17 +385,17 @@ window.addEventListener('DOMContentLoaded', () => {
     if (cloudPanelTitle) cloudPanelTitle.textContent = provider.name || 'Облачный импорт';
     if (cloudStatus) cloudStatus.textContent = provider.setupHint || 'Выберите действие.';
 
-    const canConnect = provider.id === 'google-drive' && provider.configured;
+    const canConnect = provider.configured;
     if (btnCloudConnect) {
       btnCloudConnect.hidden = !canConnect;
       btnCloudConnect.textContent = provider.connected ? 'Переподключить' : 'Подключить';
     }
 
     if (btnCloudRefresh) {
-      btnCloudRefresh.hidden = provider.id !== 'google-drive' || !provider.configured;
+      btnCloudRefresh.hidden = !provider.configured || !provider.canBrowse;
     }
 
-    const canSearch = provider.id === 'google-drive' && provider.configured && provider.connected;
+    const canSearch = provider.configured && provider.connected && provider.supportsSearch;
     if (cloudSearchRow) cloudSearchRow.hidden = !canSearch;
 
     if (cloudSetupNote) {
@@ -408,7 +408,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     const files = cloudFilesByProvider.get(provider.id) || [];
-    if (!provider.configured || provider.planned) {
+    if (!provider.configured) {
       renderCloudEmpty(provider.setupHint || 'Интеграция пока недоступна.');
       return;
     }
@@ -471,10 +471,14 @@ window.addEventListener('DOMContentLoaded', () => {
   async function loadCloudFiles(options = {}) {
     const { append = false } = options;
     const provider = getCloudProvider();
-    if (!provider || provider.id !== 'google-drive') return;
+    if (!provider || !provider.canBrowse) return;
 
     setCloudBusy(true);
-    if (cloudStatus) cloudStatus.textContent = append ? 'Загружаю ещё файлы из Google Drive...' : 'Загружаю файлы из Google Drive...';
+    if (cloudStatus) {
+      cloudStatus.textContent = append
+        ? `Загружаю ещё файлы из ${provider.name}...`
+        : `Загружаю файлы из ${provider.name}...`;
+    }
 
     try {
       const nextPageToken = append ? (cloudNextPageTokenByProvider.get(provider.id) || '') : '';
@@ -493,7 +497,7 @@ window.addEventListener('DOMContentLoaded', () => {
       cloudFilesByProvider.set(provider.id, currentFiles.concat(filesResult.files || []));
       cloudNextPageTokenByProvider.set(provider.id, filesResult.nextPageToken || '');
       cloudProviders = cloudProviders.map((entry) => entry.id === provider.id ? { ...entry, ...filesResult.provider, connected: true } : entry);
-      if (cloudStatus) cloudStatus.textContent = `Google Drive: ${cloudFilesByProvider.get(provider.id).length} файлов готовы к импорту.`;
+      if (cloudStatus) cloudStatus.textContent = `${provider.name}: ${cloudFilesByProvider.get(provider.id).length} файлов готовы к импорту.`;
       renderCloudPanel();
     } finally {
       setCloudBusy(false);
@@ -513,12 +517,12 @@ window.addEventListener('DOMContentLoaded', () => {
     const provider = getCloudProvider(providerId);
     if (!provider) return;
 
-    if (provider.id === 'google-drive' && provider.configured && provider.connected) {
+    if (provider.configured && provider.connected && provider.canBrowse) {
       const cachedFiles = cloudFilesByProvider.get(provider.id) || [];
       if (reloadFiles || cachedFiles.length === 0) {
         await loadCloudFiles();
       } else {
-        if (cloudStatus) cloudStatus.textContent = `Google Drive: ${cachedFiles.length} файлов готовы к импорту.`;
+        if (cloudStatus) cloudStatus.textContent = `${provider.name}: ${cachedFiles.length} файлов готовы к импорту.`;
         renderCloudPanel();
         revealCloudPanel();
       }
@@ -548,7 +552,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   async function searchActiveCloudFiles() {
     const provider = getCloudProvider();
-    if (!provider || provider.id !== 'google-drive') return;
+    if (!provider || !provider.supportsSearch) return;
 
     activeCloudQuery = cloudSearchInput ? cloudSearchInput.value.trim() : '';
     cloudFilesByProvider.set(provider.id, []);
@@ -1185,7 +1189,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const dropboxCard = document.getElementById('cloud-dropbox');
   if (dropboxCard) {
     dropboxCard.addEventListener('click', () => {
-      alert('Dropbox пока не входит в Stage 2. Сначала включаем Google Drive и OneDrive-ready contract.');
+      alert('Dropbox пока не входит в текущий cloud contour. Сейчас поддержаны Google Drive и OneDrive.');
     });
   }
 

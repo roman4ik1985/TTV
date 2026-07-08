@@ -8,7 +8,7 @@
 - live dictation from microphone
 - audio file transcription
 - text extraction from `pdf`, `docx`, and `epub`
-- cloud import from Google Drive for supported text, document, subtitle, audio, and PDF files
+- cloud import from Google Drive and OneDrive for supported text, document, subtitle, audio, and PDF files
 - subtitle extraction from supported YouTube links
 - manual transcript/subtitle fallback from `.txt`, `.vtt`, `.srt`, or pasted transcript text
 
@@ -64,7 +64,8 @@ Prerequisites:
 - Temporary runtime files are written next to the project in `temp_text.txt`, `temp_timing.json`, and `temp_voice.mp3`.
 - Google Drive import uses Desktop OAuth client credentials from `google_oauth_client.json` next to the app, or from the path in `TTV_GOOGLE_OAUTH_CLIENT_FILE`.
 - Google Drive tokens and imported temp files are stored under the Electron user-data runtime folder in `cloud-runtime/`.
-- The current Google Drive scope is read-only (`drive.readonly`); OneDrive is not connected yet and remains a planned provider on the shared cloud-import contract.
+- OneDrive import uses a public-client app registration with `Files.Read` and `offline_access`; config can come from `onedrive_oauth_client.json` next to the app or from `TTV_ONEDRIVE_*` environment variables.
+- OneDrive tokens share the same Electron user-data runtime folder in `cloud-runtime/`.
 - YouTube import now prefers `yt-dlp` with browser cookies from local Chromium browsers and falls back to `youtube-transcript-api` when browser-backed extraction is unavailable.
 - If Chrome is open, Windows may lock the Chrome `Cookies` database. In that case, close Chrome and retry the YouTube import.
 - If Chromium cookies cannot be decrypted on Windows, export YouTube cookies in Netscape `cookies.txt` format and place the file next to the app as `youtube_cookies.txt`, or point `TTV_YOUTUBE_COOKIES_FILE` to it.
@@ -85,3 +86,32 @@ Supported Google Drive imports:
 - Google Sheets -> `.pdf`
 - Google Drawings -> `.pdf`
 - binary files already supported by SmartReader: `txt`, `md`, `vtt`, `srt`, `pdf`, `docx`, `epub`, `mp3`, `wav`, `ogg`, `flac`
+
+## OneDrive Setup
+
+1. In Microsoft Entra admin center, create an app registration for a public client desktop app.
+2. Under `Authentication`, add the `Mobile and desktop applications` platform with redirect URI `http://localhost`.
+3. Enable `Allow public client flows`.
+4. Add delegated Microsoft Graph permission `Files.Read`.
+5. Save the client ID either through environment variables or as `onedrive_oauth_client.json` next to the app:
+
+```json
+{
+  "clientId": "YOUR-APP-CLIENT-ID",
+  "tenant": "common",
+  "redirectUri": "http://localhost/oauth2/callback",
+  "authorityHost": "https://login.microsoftonline.com",
+  "graphBaseUrl": "https://graph.microsoft.com/v1.0",
+  "scopes": ["Files.Read", "offline_access"]
+}
+```
+
+Environment variable overrides:
+
+- `TTV_ONEDRIVE_CLIENT_ID`
+- `TTV_ONEDRIVE_TENANT`
+- `TTV_ONEDRIVE_REDIRECT_URI`
+- `TTV_ONEDRIVE_AUTHORITY_HOST`
+- `TTV_ONEDRIVE_GRAPH_BASE_URL`
+- `TTV_ONEDRIVE_SCOPES`
+- `TTV_ONEDRIVE_CONFIG_FILE`

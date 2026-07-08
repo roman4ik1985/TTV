@@ -1,8 +1,10 @@
 const { app, BrowserWindow, globalShortcut, clipboard, ipcMain, dialog, shell } = require('electron');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { google } = require('googleapis');
 
@@ -20,6 +22,8 @@ const MAX_HISTORY_ENTRIES = 25;
 const GOOGLE_DRIVE_PROVIDER_ID = 'google-drive';
 const ONEDRIVE_PROVIDER_ID = 'one-drive';
 const GOOGLE_DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.readonly'];
+const ONEDRIVE_SCOPES = ['Files.Read', 'offline_access'];
+const SUPPORTED_CLOUD_IMPORT_EXTENSIONS = ['txt', 'md', 'vtt', 'srt', 'pdf', 'docx', 'epub', 'mp3', 'wav', 'ogg', 'flac'];
 
 const GOOGLE_EXPORT_CONFIG = {
   'application/vnd.google-apps.document': {
@@ -151,6 +155,10 @@ function getGoogleDriveTokenPath() {
   return path.join(getCloudRuntimeDir(), 'google-drive-token.json');
 }
 
+function getOneDriveTokenPath() {
+  return path.join(getCloudRuntimeDir(), 'one-drive-token.json');
+}
+
 function getCloudImportCacheDir() {
   return ensureDirectory(path.join(getCloudRuntimeDir(), 'imports'));
 }
@@ -193,6 +201,58 @@ function loadGoogleCredentialsPayload() {
   return safeReadJson(credentialsPath, null);
 }
 
+function parseScopeList(scopeValue, fallbackValue = []) {
+  if (Array.isArray(scopeValue)) {
+    return scopeValue.map((entry) => String(entry || '').trim()).filter(Boolean);
+  }
+
+  if (typeof scopeValue === 'string') {
+    return scopeValue.split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean);
+  }
+
+  return [...fallbackValue];
+}
+
+function trimTrailingSlash(value, fallbackValue) {
+  return String(value || fallbackValue || '').replace(/\/+$/, '');
+}
+
+function getConfiguredOneDriveConfigPath() {
+  const candidates = [
+    process.env.TTV_ONEDRIVE_CONFIG_FILE,
+    path.join(projectDir, 'onedrive_oauth_client.json')
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function loadConfiguredOneDriveConfig() {
+  const configPath = getConfiguredOneDriveConfigPath();
+  if (!configPath) return { configPath: '', payload: {} };
+  return {
+    configPath,
+    payload: safeReadJson(configPath, {}) || {}
+  };
+}
+
+function getOneDriveOAuthConfig() {
+  const { configPath, payload } = loadConfiguredOneDriveConfig();
+  const scopes = parseScopeList(
+    process.env.TTV_ONEDRIVE_SCOPES,
+    parseScopeList(payload.scopes, ONEDRIVE_SCOPES)
+  );
+
+  return {
+    configPath,
+    clientId: String(process.env.TTV_ONEDRIVE_CLIENT_ID || payload.clientId || payload.client_id || '').trim(),
+    tenant: String(process.env.TTV_ONEDRIVE_TENANT || payload.tenant || 'common').trim() || 'common',
+    authorityHost: trimTrailingSlash(process.env.TTV_ONEDRIVE_AUTHORITY_HOST || payload.authorityHost, 'https://login.microsoftonline.com'),
+    redirectUri: String(process.env.TTV_ONEDRIVE_REDIRECT_URI || payload.redirectUri || 'http://localhost/oauth2/callback').trim() || 'http://localhost/oauth2/callback',
+    graphBaseUrl: trimTrailingSlash(process.env.TTV_ONEDRIVE_GRAPH_BASE_URL || payload.graphBaseUrl, 'https://graph.microsoft.com/v1.0'),
+    scopes: Array.from(new Set(scopes.length > 0 ? scopes : ONEDRIVE_SCOPES))
+  };
+}
+
 function getGoogleDriveProviderState() {
   const credentialsPath = getConfiguredGoogleCredentialsPath();
   const tokenPath = getGoogleDriveTokenPath();
@@ -206,6 +266,7 @@ function getGoogleDriveProviderState() {
     credentialsPath,
     needsSetup: !credentialsPath,
     canBrowse: Boolean(credentialsPath),
+    supportsSearch: true,
     setupHint: credentialsPath
       ? ''
       : 'Добавьте Desktop OAuth client JSON как google_oauth_client.json рядом с приложением или задайте TTV_GOOGLE_OAUTH_CLIENT_FILE.'
@@ -213,14 +274,22 @@ function getGoogleDriveProviderState() {
 }
 
 function getOneDriveProviderState() {
+  const config = getOneDriveOAuthConfig();
+  const tokenPayload = safeReadJson(getOneDriveTokenPath(), null);
+  const isConfigured = Boolean(config.clientId);
+
   return {
     id: ONEDRIVE_PROVIDER_ID,
     name: 'OneDrive',
-    configured: false,
-    connected: false,
-    canBrowse: false,
-    planned: true,
-    setupHint: 'Контур OneDrive пока не включен. Stage 2 готовит общий provider contract.'
+    configured: isConfigured,
+    connected: Boolean(tokenPayload && (tokenPayload.refresh_token || tokenPayload.access_token)),
+    configPath: config.configPath,
+    needsSetup: !isConfigured,
+    canBrowse: isConfigured,
+    supportsSearch: true,
+    setupHint: isConfigured
+      ? ''
+      : 'Добавьте OneDrive public client config как onedrive_oauth_client.json рядом с приложением или задайте TTV_ONEDRIVE_CLIENT_ID.'
   };
 }
 
@@ -244,6 +313,20 @@ function getExtensionFromName(fileName) {
   return ext || '';
 }
 
+function getSupportedBinaryImportDescriptor(fileName, mimeType, sourceLabel) {
+  const extension = getExtensionFromName(fileName) || GOOGLE_MIME_EXTENSION_MAP[mimeType] || '';
+  if (!extension || !SUPPORTED_CLOUD_IMPORT_EXTENSIONS.includes(extension)) {
+    return null;
+  }
+
+  return {
+    supported: true,
+    kind: 'binary',
+    extension,
+    sourceLabel
+  };
+}
+
 function isGoogleWorkspaceMimeType(mimeType) {
   return typeof mimeType === 'string' && mimeType.startsWith('application/vnd.google-apps.');
 }
@@ -262,19 +345,7 @@ function getSupportedGoogleImportDescriptor(file) {
     };
   }
 
-  const extension = getExtensionFromName(file.name) || GOOGLE_MIME_EXTENSION_MAP[mimeType] || '';
-  if (!extension) return null;
-
-  if (!['txt', 'md', 'vtt', 'srt', 'pdf', 'docx', 'epub', 'mp3', 'wav', 'ogg', 'flac'].includes(extension)) {
-    return null;
-  }
-
-  return {
-    supported: true,
-    kind: 'binary',
-    extension,
-    sourceLabel: 'Google Drive'
-  };
+  return getSupportedBinaryImportDescriptor(file.name, mimeType, 'Google Drive');
 }
 
 function createGoogleOAuthClient(credentialsPayload) {
@@ -449,6 +520,288 @@ async function getGoogleDriveAuth(options = {}) {
   }
 }
 
+function createPkcePair() {
+  const codeVerifier = crypto.randomBytes(64).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+  return { codeVerifier, codeChallenge };
+}
+
+function mergeOneDriveTokenPayload(currentTokenPayload = {}, nextTokenPayload = {}) {
+  const expiresIn = Number(nextTokenPayload.expires_in || currentTokenPayload.expires_in || 0);
+  return {
+    ...currentTokenPayload,
+    ...nextTokenPayload,
+    refresh_token: nextTokenPayload.refresh_token || currentTokenPayload.refresh_token || '',
+    expires_at: expiresIn > 0 ? Date.now() + (expiresIn * 1000) : currentTokenPayload.expires_at || 0
+  };
+}
+
+function isOneDriveAccessTokenFresh(tokenPayload) {
+  const expiresAt = Number(tokenPayload?.expires_at || 0);
+  return Boolean(tokenPayload?.access_token) && expiresAt > (Date.now() + 60_000);
+}
+
+function getOneDriveTokenEndpoint(config) {
+  return `${config.authorityHost}/${config.tenant}/oauth2/v2.0/token`;
+}
+
+function getOneDriveAuthorizeEndpoint(config) {
+  return `${config.authorityHost}/${config.tenant}/oauth2/v2.0/authorize`;
+}
+
+function assertSupportedOneDriveRedirectUri(config) {
+  let redirectUrl;
+  try {
+    redirectUrl = new URL(config.redirectUri);
+  } catch (_error) {
+    throw new Error('OneDrive redirect URI is invalid. Use an http://localhost path.');
+  }
+
+  if (!['localhost', '127.0.0.1'].includes(redirectUrl.hostname) || redirectUrl.protocol !== 'http:') {
+    throw new Error('OneDrive redirect URI must use http://localhost or http://127.0.0.1 for the current SmartReader loopback flow.');
+  }
+
+  return redirectUrl;
+}
+
+async function requestOneDriveToken(config, params) {
+  const response = await fetch(getOneDriveTokenEndpoint(config), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams(params)
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error_description || payload.error || 'OneDrive token request failed.');
+    error.code = payload.error || 'TOKEN_REQUEST_FAILED';
+    throw error;
+  }
+
+  return payload;
+}
+
+function writeOneDriveTokenPayload(tokenPayload) {
+  writeJson(getOneDriveTokenPath(), tokenPayload);
+  return tokenPayload;
+}
+
+async function refreshOneDriveAccessToken(config, currentTokenPayload) {
+  if (!currentTokenPayload?.refresh_token) {
+    const error = new Error('OneDrive refresh token is missing.');
+    error.code = 'AUTH_REQUIRED';
+    throw error;
+  }
+
+  const tokenResult = await requestOneDriveToken(config, {
+    client_id: config.clientId,
+    grant_type: 'refresh_token',
+    refresh_token: currentTokenPayload.refresh_token,
+    scope: config.scopes.join(' ')
+  });
+
+  const nextTokenPayload = mergeOneDriveTokenPayload(currentTokenPayload, tokenResult);
+  writeOneDriveTokenPayload(nextTokenPayload);
+  return nextTokenPayload;
+}
+
+async function authenticateOneDriveInteractively() {
+  const config = getOneDriveOAuthConfig();
+  if (!config.clientId) {
+    throw new Error('OneDrive client ID is not configured. Add onedrive_oauth_client.json or set TTV_ONEDRIVE_CLIENT_ID.');
+  }
+
+  const registeredRedirectUrl = assertSupportedOneDriveRedirectUri(config);
+  const state = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  const { codeVerifier, codeChallenge } = createPkcePair();
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let activeRedirectUri = '';
+    const loopbackServer = http.createServer(async (request, response) => {
+      try {
+        const requestUrl = new URL(request.url || '/', `http://${registeredRedirectUrl.hostname}`);
+        if (requestUrl.pathname !== registeredRedirectUrl.pathname) {
+          response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          response.end('Not found.');
+          return;
+        }
+
+        if (requestUrl.searchParams.get('state') !== state) {
+          throw new Error('OneDrive OAuth state mismatch.');
+        }
+
+        if (requestUrl.searchParams.has('error')) {
+          throw new Error(`OneDrive authorization rejected: ${requestUrl.searchParams.get('error')}`);
+        }
+
+        const code = requestUrl.searchParams.get('code');
+        if (!code) {
+          throw new Error('OneDrive authorization code missing.');
+        }
+
+        const tokenResult = await requestOneDriveToken(config, {
+          client_id: config.clientId,
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: activeRedirectUri,
+          code_verifier: codeVerifier,
+          scope: config.scopes.join(' ')
+        });
+
+        const tokenPayload = mergeOneDriveTokenPayload({}, tokenResult);
+        writeOneDriveTokenPayload(tokenPayload);
+
+        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end('<html><body style="font-family:Segoe UI,sans-serif;padding:24px;">OneDrive подключен. Можно вернуться в SmartReader.</body></html>');
+
+        settled = true;
+        resolve(tokenPayload);
+      } catch (error) {
+        response.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+        response.end(`<html><body style="font-family:Segoe UI,sans-serif;padding:24px;">Ошибка авторизации OneDrive: ${String(error.message || error)}</body></html>`);
+        settled = true;
+        reject(error);
+      } finally {
+        loopbackServer.close();
+      }
+    });
+
+    loopbackServer.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    });
+
+    loopbackServer.listen(0, '127.0.0.1', async () => {
+      const address = loopbackServer.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      const redirectUri = `${registeredRedirectUrl.protocol}//${registeredRedirectUrl.hostname}:${port}${registeredRedirectUrl.pathname}`;
+      activeRedirectUri = redirectUri;
+      const authUrl = new URL(getOneDriveAuthorizeEndpoint(config));
+
+      authUrl.searchParams.set('client_id', config.clientId);
+      authUrl.searchParams.set('response_type', 'code');
+      authUrl.searchParams.set('redirect_uri', redirectUri);
+      authUrl.searchParams.set('response_mode', 'query');
+      authUrl.searchParams.set('scope', config.scopes.join(' '));
+      authUrl.searchParams.set('state', state);
+      authUrl.searchParams.set('code_challenge', codeChallenge);
+      authUrl.searchParams.set('code_challenge_method', 'S256');
+      authUrl.searchParams.set('prompt', 'select_account');
+
+      try {
+        await shell.openExternal(authUrl.toString());
+      } catch (error) {
+        if (!settled) {
+          settled = true;
+          loopbackServer.close();
+          reject(error);
+        }
+      }
+    });
+  });
+}
+
+async function oneDriveGraphRequest(resourcePathOrUrl, options = {}) {
+  const { config, accessToken, method = 'GET', query = null, headers = {}, body = null } = options;
+  const requestUrl = resourcePathOrUrl.startsWith('http')
+    ? new URL(resourcePathOrUrl)
+    : new URL(`${config.graphBaseUrl}${resourcePathOrUrl}`);
+
+  if (query && typeof query === 'object') {
+    Object.entries(query).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      requestUrl.searchParams.set(key, value);
+    });
+  }
+
+  const response = await fetch(requestUrl, {
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...headers
+    },
+    body
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    let payload = {};
+    try {
+      payload = JSON.parse(text);
+    } catch (_error) {
+      payload = {};
+    }
+
+    const error = new Error(payload?.error?.message || text || `Microsoft Graph request failed with HTTP ${response.status}.`);
+    error.code = payload?.error?.code || `HTTP_${response.status}`;
+    error.status = response.status;
+    error.retryAfter = response.headers.get('retry-after') || '';
+    throw error;
+  }
+
+  return response;
+}
+
+async function getOneDriveSession(options = {}) {
+  const interactive = Boolean(options.interactive);
+  const providerState = getOneDriveProviderState();
+  const config = getOneDriveOAuthConfig();
+
+  if (!providerState.configured) {
+    throw new Error(providerState.setupHint);
+  }
+
+  let tokenPayload = safeReadJson(getOneDriveTokenPath(), null);
+  if (!tokenPayload && interactive) {
+    tokenPayload = await authenticateOneDriveInteractively();
+  }
+
+  if (!tokenPayload) {
+    const error = new Error('OneDrive authorization is required.');
+    error.code = 'AUTH_REQUIRED';
+    throw error;
+  }
+
+  try {
+    if (!isOneDriveAccessTokenFresh(tokenPayload)) {
+      tokenPayload = await refreshOneDriveAccessToken(config, tokenPayload);
+    }
+
+    await oneDriveGraphRequest('/me/drive', {
+      config,
+      accessToken: tokenPayload.access_token,
+      query: { $select: 'id,driveType,webUrl' }
+    });
+
+    return {
+      config,
+      tokenPayload
+    };
+  } catch (error) {
+    const message = String(error?.message || error || '');
+    const shouldReset = error?.status === 401 || /invalid_grant|invalid_request|interaction_required|token/i.test(message);
+
+    if (shouldReset) {
+      if (fs.existsSync(getOneDriveTokenPath())) fs.unlinkSync(getOneDriveTokenPath());
+      if (interactive) {
+        return {
+          config,
+          tokenPayload: await authenticateOneDriveInteractively()
+        };
+      }
+      const authError = new Error('OneDrive authorization expired. Reconnect the account.');
+      authError.code = 'AUTH_REQUIRED';
+      throw authError;
+    }
+
+    throw error;
+  }
+}
+
 function escapeGoogleDriveQueryValue(value) {
   return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
@@ -552,6 +905,121 @@ async function importGoogleDriveFile(fileId) {
   };
 }
 
+function escapeOneDriveSearchValue(value) {
+  return String(value || '').replace(/'/g, "''");
+}
+
+function getSupportedOneDriveImportDescriptor(file) {
+  if (!file || file.folder) return null;
+  return getSupportedBinaryImportDescriptor(file.name, file.file?.mimeType || '', 'OneDrive');
+}
+
+function mapOneDriveFile(file) {
+  const descriptor = getSupportedOneDriveImportDescriptor(file);
+  return {
+    id: file.id,
+    name: file.name,
+    modifiedTime: file.lastModifiedDateTime,
+    size: file.size,
+    webViewLink: file.webUrl,
+    supported: Boolean(descriptor),
+    importKind: descriptor?.kind || 'unsupported',
+    extension: descriptor?.extension || '',
+    sourceLabel: descriptor?.sourceLabel || 'OneDrive'
+  };
+}
+
+async function listOneDriveFiles(query = '', pageToken = '') {
+  const { config, tokenPayload } = await getOneDriveSession({ interactive: false });
+  let response;
+
+  if (pageToken) {
+    response = await oneDriveGraphRequest(pageToken, {
+      config,
+      accessToken: tokenPayload.access_token
+    });
+  } else if (query.trim()) {
+    const searchPath = `/me/drive/root/search(q='${escapeOneDriveSearchValue(query.trim())}')`;
+    response = await oneDriveGraphRequest(searchPath, {
+      config,
+      accessToken: tokenPayload.access_token,
+      query: {
+        $top: '20',
+        $select: 'id,name,size,lastModifiedDateTime,webUrl,file,folder,parentReference'
+      }
+    });
+  } else {
+    response = await oneDriveGraphRequest('/me/drive/root/children', {
+      config,
+      accessToken: tokenPayload.access_token,
+      query: {
+        $top: '20',
+        $select: 'id,name,size,lastModifiedDateTime,webUrl,file,folder,parentReference'
+      }
+    });
+  }
+
+  const payload = await response.json();
+  const files = (payload.value || [])
+    .map(mapOneDriveFile)
+    .filter((file) => file.supported)
+    .sort((left, right) => String(right.modifiedTime || '').localeCompare(String(left.modifiedTime || '')));
+
+  return {
+    files,
+    nextPageToken: payload['@odata.nextLink'] || ''
+  };
+}
+
+async function streamWebResponseToPath(response, targetPath) {
+  if (!response.body) {
+    throw new Error('Cloud file response has no body.');
+  }
+
+  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(targetPath));
+  return targetPath;
+}
+
+async function importOneDriveFile(fileId) {
+  const { config, tokenPayload } = await getOneDriveSession({ interactive: false });
+  const metadataResponse = await oneDriveGraphRequest(`/me/drive/items/${encodeURIComponent(fileId)}`, {
+    config,
+    accessToken: tokenPayload.access_token,
+    query: {
+      $select: 'id,name,size,lastModifiedDateTime,webUrl,file,folder,@microsoft.graph.downloadUrl'
+    }
+  });
+
+  const file = await metadataResponse.json();
+  const descriptor = getSupportedOneDriveImportDescriptor(file);
+  if (!descriptor) {
+    throw new Error('Этот файл OneDrive пока не поддерживается для импорта в SmartReader.');
+  }
+
+  const downloadUrl = file['@microsoft.graph.downloadUrl'];
+  if (!downloadUrl) {
+    throw new Error('OneDrive did not return a download URL for this file.');
+  }
+
+  const timestamp = Date.now();
+  const safeBaseName = sanitizeCloudFileName(path.parse(file.name || 'cloud-file').name);
+  const outputFileName = `${safeBaseName}-${timestamp}.${descriptor.extension}`;
+  const outputFilePath = path.join(getCloudImportCacheDir(), outputFileName);
+  const downloadResponse = await fetch(downloadUrl);
+
+  if (!downloadResponse.ok) {
+    throw new Error(`OneDrive download failed with HTTP ${downloadResponse.status}.`);
+  }
+
+  await streamWebResponseToPath(downloadResponse, outputFilePath);
+
+  return {
+    filePath: outputFilePath,
+    fileName: outputFileName,
+    sourceLabel: descriptor.sourceLabel
+  };
+}
+
 async function connectCloudProvider(providerId) {
   if (providerId === GOOGLE_DRIVE_PROVIDER_ID) {
     await getGoogleDriveAuth({ interactive: true });
@@ -559,11 +1027,8 @@ async function connectCloudProvider(providerId) {
   }
 
   if (providerId === ONEDRIVE_PROVIDER_ID) {
-    return {
-      ok: false,
-      provider: getOneDriveProviderState(),
-      error: 'OneDrive will be enabled in a follow-up contour.'
-    };
+    await getOneDriveSession({ interactive: true });
+    return { ok: true, provider: getOneDriveProviderState() };
   }
 
   return {
@@ -589,11 +1054,18 @@ async function listCloudProviderFiles(providerId, query, pageToken) {
   }
 
   if (providerId === ONEDRIVE_PROVIDER_ID) {
-    return {
-      ok: false,
-      provider: getOneDriveProviderState(),
-      error: 'OneDrive listing is not enabled yet.'
-    };
+    try {
+      const result = await listOneDriveFiles(query, pageToken);
+      return { ok: true, provider: getOneDriveProviderState(), ...result };
+    } catch (error) {
+      return {
+        ok: false,
+        provider: getOneDriveProviderState(),
+        error: error.code === 'AUTH_REQUIRED'
+          ? 'OneDrive authorization is required. Connect the account first.'
+          : error.message
+      };
+    }
   }
 
   return {
@@ -619,11 +1091,18 @@ async function importCloudProviderFile(providerId, fileId) {
   }
 
   if (providerId === ONEDRIVE_PROVIDER_ID) {
-    return {
-      ok: false,
-      provider: getOneDriveProviderState(),
-      error: 'OneDrive import is not enabled yet.'
-    };
+    try {
+      const result = await importOneDriveFile(fileId);
+      return { ok: true, provider: getOneDriveProviderState(), ...result };
+    } catch (error) {
+      return {
+        ok: false,
+        provider: getOneDriveProviderState(),
+        error: error.code === 'AUTH_REQUIRED'
+          ? 'OneDrive authorization expired. Reconnect the account and retry.'
+          : error.message
+      };
+    }
   }
 
   return {
