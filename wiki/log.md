@@ -22,3 +22,4 @@
 - [2026-07-08 02:22] implementation - preload.js, renderer.js, wiki/log.md - Fixed Electron file picker and drag/drop imports by exposing webUtils.getPathForFile through preload, then verified txt/vtt/srt/unsupported import flows through the SmartReader UI.
 - [2026-07-08 02:24] config - wiki/log.md, GitHub issue #2 - Closed GitHub issue #2 after hands-on Electron import smoke, file-path follow-up fix, local npm run ci, and green GitHub Actions for commit b3b807d.
 - [2026-07-08 03:19] implementation - stt_server.py, package.json, scripts/pdf_import_smoke.py, wiki/index.md, wiki/synthesis/PDF_IMPORT_EDGE_CASES.md, wiki/log.md - Implemented issue #3 PDF edge-case coverage: explicit OCR-required and broken-text-layer branches, generated PDF smoke fixtures, CI hook, and regression notes.
+- [2026-07-08 03:21] config - wiki/log.md, GitHub issue #3 - Closed GitHub issue #3 after generated PDF smoke coverage, local npm run ci, and green GitHub Actions for commit 8a606c2.
